@@ -87,7 +87,7 @@ class DiscoELB(object):
     def get_or_create_elb(self, hostclass, security_groups, subnets, hosted_zone_name,
                           health_check_url, instance_protocol, instance_port,
                           elb_protocol, elb_port, elb_public, sticky_app_cookie,
-                          idle_timeout=None, connection_draining_timeout=None):
+                          idle_timeout, connection_draining_timeout, tags):
         """
         Returns an elb.
         This updates an existing elb if it exists, otherwise this creates a new elb.
@@ -108,6 +108,7 @@ class DiscoELB(object):
             idle_timeout (int): time limit (in seconds) that ELB should wait before killing idle connections
             connection_draining_timeout (int): timeout limit (in seconds) that ELB should allow for open
                                                requests to resolve before removing EC2 instance from ELB
+            tags (dict): dict of tag names as keys and tag values. Removing tags is not supported
         """
         cname = self.get_cname(hostclass, hosted_zone_name)
         elb_name = DiscoELB.get_elb_name(self.vpc.environment_name, hostclass)
@@ -141,6 +142,7 @@ class DiscoELB(object):
         self._setup_health_check(elb_name, health_check_url, instance_protocol, instance_port)
         self._setup_sticky_cookies(elb_name, elb_port, sticky_app_cookie)
         self._update_elb_attributes(elb_name, idle_timeout, connection_draining_timeout)
+        self._update_tags(elb_name, tags)
 
         return elb
 
@@ -166,6 +168,14 @@ class DiscoELB(object):
             throttled_call(self.elb_client.modify_load_balancer_attributes,
                            LoadBalancerName=elb_name,
                            LoadBalancerAttributes=updates)
+
+    def _update_tags(self, elb_name, tags):
+        if tags:
+            logging.info("Tagging ELB %s with %s tags", elb_name, tags)
+            tag_dicts = [{'Key': key, 'Value': value} for key, value in tags.iteritems()]
+            throttled_call(self.elb_client.add_tags,
+                           LoadBalancerNames=[elb_name],
+                           Tags=tag_dicts)
 
     def get_elb(self, hostclass):
         """Get an existing ELB without creating it"""

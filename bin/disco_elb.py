@@ -20,6 +20,7 @@ Options:
 
 from __future__ import print_function
 import sys
+import getpass
 from docopt import docopt
 
 from disco_aws_automation import DiscoELB, DiscoVPC
@@ -46,7 +47,7 @@ def run():
         for elb in sorted(DiscoELB(vpc).list()):
             print("{0:<20} {1:25}".format(elb['LoadBalancerName'], ','.join(elb['AvailabilityZones'])))
     elif args['update']:
-        DiscoAWS(config, env).update_elb(args['--hostclass'])
+        DiscoAWS(config, env).update_elb(args['--hostclass'], owner=getpass.getuser())
 
 if __name__ == "__main__":
     run_gracefully(run)

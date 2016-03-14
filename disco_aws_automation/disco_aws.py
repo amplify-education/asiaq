@@ -261,7 +261,7 @@ class DiscoAWS(object):
     def _default_protocol_for_port(self, port):
         return {80: "HTTP", 443: "HTTPS"}.get(int(port)) or "TCP"
 
-    def update_elb(self, hostclass, update_autoscaling=True):
+    def update_elb(self, hostclass, update_autoscaling=True, owner=''):
         '''Creates, Updates and Delete an ELB for a hostclass depending on current configuration'''
         if not is_truthy(self.hostclass_option_default(hostclass, "elb", "False")):
             if self.elb.get_elb(hostclass):
@@ -295,7 +295,12 @@ class DiscoAWS(object):
                 sticky_app_cookie=self.hostclass_option_default(hostclass, "elb_sticky_app_cookie", None),
                 idle_timeout=int(self.hostclass_option_default(hostclass, "elb_idle_timeout", 300)),
                 connection_draining_timeout=int(self.hostclass_option_default(hostclass,
-                                                                              "elb_connection_draining", 300))
+                                                                              "elb_connection_draining",
+                                                                              300)),
+                tags={"hostclass": hostclass,
+                      "owner": owner,
+                      "environment": self.environment_name,
+                      "productline": self.hostclass_option_default(hostclass, "product_line", "")}
             )
 
         if update_autoscaling:
@@ -368,7 +373,7 @@ class DiscoAWS(object):
 
         self.create_floating_interfaces(meta_network, hostclass)
 
-        elb = self.update_elb(hostclass, update_autoscaling=False)
+        elb = self.update_elb(hostclass, update_autoscaling=False, owner=user_data["owner"])
 
         chaos = is_truthy(chaos or self.hostclass_option_default(hostclass, "chaos", "True"))
 
