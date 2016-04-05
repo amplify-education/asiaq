@@ -1822,6 +1822,7 @@ The following configuration is available in `disco_elasticache.ini` to configure
     port=6379
     parameter_group=default.redis2.8
     num_nodes=2
+    maintenance_window=sun:5:00-sun:09:00
 
 Options:
 
@@ -1830,6 +1831,7 @@ Options:
 -   `port` Port that Redis should be available on
 -   `parameter_group` The set of Redis parameters to use
 -   `num_nodes` Number of nodes in cache cluster
+-   `maintenance_window` Specifies the weekly time range during which maintenance on the cache cluster is performed. 
 
 ElastiCache also depends on some configuration from `disco_aws.ini`
 
