@@ -53,7 +53,7 @@ class DiscoVPC(object):
         self._region = None  # lazily initialized
         self._networks = None  # lazily initialized
         self._alarms_config = None  # lazily initialized
-        self.elasticsearch = DiscoES(read_config(), read_config(CONFIG_FILE), environment_name)
+        self.elasticsearch = DiscoES(read_config(), read_config(CONFIG_FILE), environment_name, environment_type)
         self.rds = DiscoRDS(vpc=self)
         self.elb = DiscoELB(vpc=self)
         self.elasticache = DiscoElastiCache(vpc=self)

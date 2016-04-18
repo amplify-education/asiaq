@@ -5,7 +5,6 @@ import logging
 import time
 import boto3
 
-from ConfigParser import NoOptionError
 from .disco_iam import DiscoIAM
 from .disco_route53 import DiscoRoute53
 from .resource_helper import throttled_call
@@ -18,11 +17,12 @@ class DiscoES(object):
     A simple class to manage ElasticSearch
     """
 
-    def __init__(self, config_aws, config_vpc, environment_name):
+    def __init__(self, config_aws, config_vpc, environment_name, environment_type):
         self.conn = boto3.client('es')
         self._config_aws = config_aws
         self._config_vpc = config_vpc
         self.environment_name = environment_name.lower()
+        self.environment_type = environment_type
         self.route53 = DiscoRoute53()
 
     @property
@@ -179,16 +179,13 @@ class DiscoES(object):
     def get_vpc_option(self, option, default=None):
         '''Returns appropriate configuration for the current environment'''
         env_section = "env:{0}".format(self.environment_name)
-        envtype_section = "envtype:{0}".format(self.environment_name)
-        envtype_sandbox_section = "envtype:{0}".format("sandbox")
+        envtype_section = "envtype:{0}".format(self.environment_type)
         peering_section = "peerings"
 
         if self._config_vpc.has_option(env_section, option):
             value = self._config_vpc.get(env_section, option)
         elif self._config_vpc.has_option(envtype_section, option):
             value = self._config_vpc.get(envtype_section, option)
-        elif self._config_vpc.has_option(envtype_sandbox_section, option):
-            value = self._config_vpc.get(envtype_sandbox_section, option)
         elif self._config_vpc.has_option(peering_section, option):
             value = self._config_vpc.get(peering_section, option)
 
