@@ -20,11 +20,13 @@ from .disco_alarm import DiscoAlarm
 from .disco_alarm_config import DiscoAlarmsConfig
 from .disco_autoscale import DiscoAutoscale
 from .disco_constants import CREDENTIAL_BUCKET_TEMPLATE, NETWORKS
+from .disco_config import DiscoAWSConfigReader
 from .disco_metanetwork import DiscoMetaNetwork
 from .disco_elasticache import DiscoElastiCache
 from .disco_sns import DiscoSNS
 from .disco_rds import DiscoRDS
 from .disco_elb import DiscoELB
+from .disco_es import DiscoES
 from .exceptions import (
     MultipleVPCsForVPCNameError, TimeoutError, VPCConfigError, VPCEnvironmentError, VPCPeeringSyntaxError,
     VPCNameNotFound)
@@ -52,6 +54,8 @@ class DiscoVPC(object):
         self._region = None  # lazily initialized
         self._networks = None  # lazily initialized
         self._alarms_config = None  # lazily initialized
+        config_reader = DiscoAWSConfigReader(environment_name, environment_type)
+        self.elasticsearch = DiscoES(config_reader)
         self.rds = DiscoRDS(vpc=self)
         self.elb = DiscoELB(vpc=self)
         self.elasticache = DiscoElastiCache(vpc=self)
@@ -73,7 +77,8 @@ class DiscoVPC(object):
         peering_section = "peerings"
         if self.config.has_option(env_section, option):
             return self.config.get(env_section, option)
-        elif self.config.has_option(envtype_section, option):
+        elif self.config.has_option(envtype_section, option) and \
+                self.config.get(envtype_section, option):
             return self.config.get(envtype_section, option)
         elif self.config.has_option(peering_section, option):
             return self.config.get(peering_section, option)
@@ -429,6 +434,7 @@ class DiscoVPC(object):
         self._attach_vgw()
         self.configure_notifications()
         DiscoVPC.create_peering_connections(DiscoVPC.parse_peerings_config(self.vpc.id))
+        self.elasticsearch.create()
         self.rds.update_all_clusters_in_vpc()
 
     def configure_notifications(self):
@@ -476,6 +482,7 @@ class DiscoVPC(object):
         self._destroy_instances()
         self.elb.destroy_all_elbs()
         self._destroy_rds()
+        self.elasticsearch.delete()
         self.elasticache.delete_all_cache_clusters(wait=True)
         self.elasticache.delete_all_subnet_groups()
         self._destroy_interfaces()

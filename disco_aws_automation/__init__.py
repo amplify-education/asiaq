@@ -56,6 +56,7 @@ from .disco_sns import DiscoSNS
 from .disco_chaos import DiscoChaos
 from .disco_storage import DiscoStorage
 from .disco_log_metrics import DiscoLogMetrics
+from .disco_es import DiscoES
 from .exceptions import TimeoutError, ExpectedTimeoutError, AccountError, CommandError, VPCEnvironmentError
 from .exceptions import SmokeTestError, AMIError, VolumeError, InstanceMetadataError, S3WritingError
 from .exceptions import MissingAppAuthError, AppAuthKeyNotFoundError, VPCConfigError, VPCPeeringSyntaxError
