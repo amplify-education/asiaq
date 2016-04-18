@@ -84,6 +84,11 @@ class DiscoES(object):
             return False
 
     def _access_policy(self):
+        """
+        Construct an access policy for the new elasticsearch cluster. Needs to be dynamically created because
+        it will use the environment's proxy hostclass to forward requests to the elasticsearch cluster and the
+        IP of the proxy hostclass could be different at run time.
+        """
         disco_iam = DiscoIAM(
             environment=self.environment_name,
             boto2_connection=self.aws.connection
@@ -125,7 +130,11 @@ class DiscoES(object):
         Configuration is read from disco_vpc.ini
         '''
         logging.info('Creating elasticsearch domain %s', self._cluster_name)
-        self._upsert(self.conn.create_elasticsearch_domain)
+
+        # Get the latest elasticsearch cluster config.
+        es_config = self._get_es_config()
+        # Create a new elasticsearch config using the latest config.
+        throttled_call(self.conn.create_elasticsearch_domain, **es_config)
         self._add_route53()
 
     def update(self):
@@ -134,10 +143,17 @@ class DiscoES(object):
         Configuration is read from disco_vpc.ini
         '''
         logging.info('Updating elasticsearch domain %s', self._cluster_name)
-        self._upsert(self.conn.update_elasticsearch_domain_config)
+
+        # Get the latest elasticsearch cluster config.
+        es_config = self._get_es_config()
+        # Update the elasticsearch cluster config to be the latest one.
+        throttled_call(self.conn.update_elasticsearch_domain_config, **es_config)
         self._add_route53()
 
-    def _upsert(self, generator):
+    def _get_es_config(self):
+        """
+        Create boto3 config for the elasticsearch cluster.
+        """
         es_cluster_config = {
             'InstanceType': self.get_vpc_option('es_instance_type', 'm3.medium.elasticsearch'),
             'InstanceCount': int(self.get_vpc_option('es_instance_count', 1)),
@@ -166,7 +182,7 @@ class DiscoES(object):
             'AutomatedSnapshotStartHour': int(self.get_vpc_option('es_snapshot_start_hour', 5))
         }
 
-        es_kwargs = {
+        config = {
             'DomainName': self._cluster_name,
             'ElasticsearchClusterConfig': es_cluster_config,
             'EBSOptions': ebs_option,
@@ -174,7 +190,7 @@ class DiscoES(object):
             'SnapshotOptions': snapshot_options
         }
 
-        throttled_call(generator, **es_kwargs)
+        return config
 
     def get_vpc_option(self, option, default=None):
         '''Returns appropriate configuration for the current environment'''
