@@ -20,6 +20,7 @@ from .disco_alarm import DiscoAlarm
 from .disco_alarm_config import DiscoAlarmsConfig
 from .disco_autoscale import DiscoAutoscale
 from .disco_constants import CREDENTIAL_BUCKET_TEMPLATE, NETWORKS
+from .disco_config import DiscoAWSConfigReader
 from .disco_metanetwork import DiscoMetaNetwork
 from .disco_elasticache import DiscoElastiCache
 from .disco_sns import DiscoSNS
@@ -53,7 +54,8 @@ class DiscoVPC(object):
         self._region = None  # lazily initialized
         self._networks = None  # lazily initialized
         self._alarms_config = None  # lazily initialized
-        self.elasticsearch = DiscoES(read_config(), read_config(CONFIG_FILE), environment_name, environment_type)
+        config_reader = DiscoAWSConfigReader(environment_name, environment_type)
+        self.elasticsearch = DiscoES(config_reader)
         self.rds = DiscoRDS(vpc=self)
         self.elb = DiscoELB(vpc=self)
         self.elasticache = DiscoElastiCache(vpc=self)
