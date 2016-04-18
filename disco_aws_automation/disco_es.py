@@ -124,6 +124,7 @@ class DiscoES(object):
         Create elasticsearch cluster using _upsert method
         Configuration is read from disco_vpc.ini
         '''
+        logging.info('Creating elasticsearch domain %s', self._cluster_name)
         self._upsert(self.conn.create_elasticsearch_domain)
         self._add_route53()
 
@@ -132,6 +133,7 @@ class DiscoES(object):
         Update elasticsearch cluster using _upsert method
         Configuration is read from disco_vpc.ini
         '''
+        logging.info('Updating elasticsearch domain %s', self._cluster_name)
         self._upsert(self.conn.update_elasticsearch_domain_config)
         self._add_route53()
 
