@@ -17,8 +17,24 @@ def pipelines_from_file(pipeline_definition_filename):
 
 class Pipeline(dict):
     '''Class encapsulating a pipeline.
-
        This class looks and acts just like a dict with some additional functions specific to a pipeline.
+
+       An example pipeline format:
+
+       {  "sequence": 1,
+          "hostclass": "mhcdiscosomething",
+          "desired_size": 1,
+          "instance_type": "m1.large",
+          "extra_space": None,
+          "extra_disk": None,
+          "iops": None,
+          "smoke_test": "true",
+          "ami": None,
+          "min_size": None,
+          "max_size": None,
+          "termination_policies": None,
+          "chaos": "yes"
+        }
     '''
 
     def __init__(self, *args, **kwargs):
