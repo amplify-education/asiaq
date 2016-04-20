@@ -48,6 +48,7 @@ from docopt import docopt
 from disco_aws_automation import DiscoAWS, DiscoBake, DiscoDeploy, read_config
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.disco_logging import configure_logging
+from disco_aws_automation.pipeline import pipelines_from_file
 
 
 # R0912 Allow more than 12 branches so we can parse a lot of commands..
@@ -62,11 +63,9 @@ def run():
 
     env = args["--environment"] or config.get("disco_aws", "default_environment")
 
-    pipeline_definition = []
+    pipelines = []
     if args["--pipeline"]:
-        with open(args["--pipeline"], "r") as f:
-            reader = csv.DictReader(f)
-            pipeline_definition = [line for line in reader]
+        pipelines = pipelines_from_file(args["--pipeline"])
 
     aws = DiscoAWS(config, env)
 
@@ -78,7 +77,7 @@ def run():
 
     deploy = DiscoDeploy(
         aws, test_aws, DiscoBake(config, aws.connection),
-        pipeline_definition=pipeline_definition,
+        pipeline_definition=pipelines,
         ami=args.get("--ami"), hostclass=args.get("--hostclass"),
         allow_any_hostclass=args["--allow-any-hostclass"])
 
@@ -87,7 +86,7 @@ def run():
     elif args["update"]:
         deploy.update(dry_run=args["--dry-run"])
     elif args["list"]:
-        missing = "-" if len(pipeline_definition) else ""
+        missing = "-" if len(pipelines) else ""
         if args["--tested"]:
             for (_hostclass, ami) in deploy.get_latest_tested_amis().iteritems():
                 print("{} {:40} {}".format(
