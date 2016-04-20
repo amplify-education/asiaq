@@ -31,7 +31,7 @@ class Pipeline(dict):
     # functions specific to a pipeline #
     ####################################
 
-    def _get_val_as_recurrence_map(self, key, sentinel=''):
+    def _val_as_recurrence_map(self, key, sentinel=''):
         size = self.get(key)
         if not size:
             return {sentinel: None}
@@ -40,8 +40,8 @@ class Pipeline(dict):
                 part.split('@')[1]: int(part.split('@')[0])
                 for part in str(size).split(':')}
 
-    def get_recurrence_map_as_min_int_or_none(self, key):
-        return min(self._get_val_as_recurrence_map(key).values())
+    def recurrence_map_as_min_int_or_none(self, key):
+        return min(self._val_as_recurrence_map(key).values())
 
-    def get_recurrence_map_as_max_int_or_none(self, key):
-        return max(self._get_val_as_recurrence_map(key).values())
+    def recurrence_map_as_max_int_or_none(self, key):
+        return max(self._val_as_recurrence_map(key).values())
