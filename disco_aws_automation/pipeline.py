@@ -115,7 +115,9 @@ class Pipeline(dict):
         size = self.get(key)
         if not size:
             return {None: None}
+
+        if str(size).isdigit():
+            return {None: int(size)}
         else:
-            return {None: int(size)} if str(size).isdigit() else {
-                part.split('@')[1]: int(part.split('@')[0])
-                for part in str(size).split(':')}
+            return {part.split('@')[1]: int(part.split('@')[0])
+                    for part in str(size).split(':')}
