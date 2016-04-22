@@ -67,15 +67,15 @@ class Pipeline(dict):
     # If you want the raw values, then just access the data through the dict interface. #
     #####################################################################################
 
-    def sequence(self):
+    def get_sequence(self):
         ''' required '''
         return int(self.__getitem__("sequence"))
 
-    def hostclass(self):
+    def get_hostclass(self):
         ''' required '''
         return self.__getitem__("hostclass")
 
-    def min_size(self):
+    def get_min_size(self):
         ''' :return: size as min int or None. For example:
                      - no value, will return: None
                      - simple int value of 5 will return: 5
@@ -83,7 +83,7 @@ class Pipeline(dict):
         '''
         return min(self._size_as_recurrence_map("min_size").values())
 
-    def desired_size(self):
+    def get_desired_size(self):
         ''' :return: size as max int or None. For example:
                      - no value, will return: None
                      - simple int value of 5 will return: 5
@@ -91,7 +91,7 @@ class Pipeline(dict):
         '''
         return max(self._size_as_recurrence_map("desired_size").values())
 
-    def max_size(self):
+    def get_max_size(self):
         ''' :return: size as max int or None. For example:
                      - no value, will return: None
                      - simple int value of 5 will return: 5
@@ -99,31 +99,31 @@ class Pipeline(dict):
         '''
         return max(self._size_as_recurrence_map("max_size").values())
 
-    def instance_type(self):
+    def get_instance_type(self):
         return self.get("instance_type")
 
-    def extra_disk(self):
+    def get_extra_disk(self):
         return int(self.get("extra_disk")) if self.has_key("extra_disk") else None
 
-    def extra_space(self):
+    def get_extra_space(self):
         return int(self.get("extra_space")) if self.has_key("extra_space") else None
 
-    def iops(self):
+    def get_iops(self):
         return int(self.get("iops")) if self.has_key("iops") else None
 
-    def smoke_test(self):
+    def get_smoke_test(self):
         return is_truthy(self.get("smoke_test", "false"))
 
-    def ami(self):
+    def get_ami(self):
         return self.get("ami")
 
-    def deployable(self):
+    def get_deployable(self):
         return is_truthy(self.get("deployable", "false"))
 
-    def chaos(self):
+    def get_chaos(self):
         return is_truthy(self.get("chaos", "false"))
 
-    def termination_policies(self):
+    def get_termination_policies(self):
         return self.get("termination_policies").split() if self.has_key("termination_policies") else None
 
     def _size_as_recurrence_map(self, key):
