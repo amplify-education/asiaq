@@ -111,11 +111,11 @@ class Pipeline(dict):
     def termination_policies(self):
         return self.get("termination_policies").split() if self.has_key("termination_policies") else None
 
-    def _val_as_recurrence_map(self, key, sentinel=''):
+    def _val_as_recurrence_map(self, key):
         size = self.get(key)
         if not size:
-            return {sentinel: None}
+            return {None: None}
         else:
-            return {sentinel: int(size)} if str(size).isdigit() else {
+            return {None: int(size)} if str(size).isdigit() else {
                 part.split('@')[1]: int(part.split('@')[0])
                 for part in str(size).split(':')}
