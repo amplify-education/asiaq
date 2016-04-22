@@ -13,16 +13,16 @@ class PipelineTests(TestCase):
     def test_size_as_rec_map_with_none(self):
         """_size_as_recurrence_map works with None"""
         pipeline = Pipeline({"some_key": None})
-        self.assertEqual(pipeline._val_as_recurrence_map("some_key"), {"": None})
+        self.assertEqual(pipeline._val_as_recurrence_map("some_key"), {None: None})
 
         pipeline = Pipeline({"some_key": ""})
-        self.assertEqual(pipeline._val_as_recurrence_map("some_key"), {"": None})
+        self.assertEqual(pipeline._val_as_recurrence_map("some_key"), {None: None})
 
     def test_size_as_rec_map_with_int(self):
         """_size_as_recurrence_map works with simple integer"""
         pipeline = Pipeline({"some_key": 5})
-        self.assertEqual(pipeline._val_as_recurrence_map("some_key", sentinel="0 0 * * *"),
-                         {"0 0 * * *": 5})
+        self.assertEqual(pipeline._val_as_recurrence_map("some_key"),
+                         {None: 5})
 
     def test_size_as_rec_map_with_map(self):
         """_size_as_recurrence_map works with a map"""
