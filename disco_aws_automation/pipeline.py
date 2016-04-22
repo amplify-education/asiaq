@@ -81,7 +81,7 @@ class Pipeline(dict):
                      - simple int value of 5 will return: 5
                      - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 2
         '''
-        return min(self._val_as_recurrence_map("min_size").values())
+        return min(self._size_as_recurrence_map("min_size").values())
 
     def desired_size(self):
         ''' :return: size as max int or None. For example:
@@ -89,7 +89,7 @@ class Pipeline(dict):
                      - simple int value of 5 will return: 5
                      - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 24
         '''
-        return max(self._val_as_recurrence_map("desired_size").values())
+        return max(self._size_as_recurrence_map("desired_size").values())
 
     def max_size(self):
         ''' :return: size as max int or None. For example:
@@ -97,7 +97,7 @@ class Pipeline(dict):
                      - simple int value of 5 will return: 5
                      - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 24
         '''
-        return max(self._val_as_recurrence_map("max_size").values())
+        return max(self._size_as_recurrence_map("max_size").values())
 
     def instance_type(self):
         return self.get("instance_type")
@@ -126,7 +126,13 @@ class Pipeline(dict):
     def termination_policies(self):
         return self.get("termination_policies").split() if self.has_key("termination_policies") else None
 
-    def _val_as_recurrence_map(self, key):
+    def _size_as_recurrence_map(self, key):
+        ''' :return: size as "recurrence" map For example:
+                     - no value, will return: {None: None}
+                     - simple int value of 5 will return: {None: 5}
+                     - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: {'0 10 * * *': 24,
+                                                                                           '0 22 * * *': 2}
+        '''
         size = self.get(key)
         if not size:
             return {None: None}
