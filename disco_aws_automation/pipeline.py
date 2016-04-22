@@ -75,6 +75,18 @@ class Pipeline(dict):
         ''' required '''
         return self.__getitem__("hostclass")
 
+    def min_size(self):
+        ''' :return: recurrence map as min int or none '''
+        return min(self._val_as_recurrence_map("min_size").values())
+
+    def desired_size(self):
+        ''' :return: recurrence map as max int or none '''
+        return max(self._val_as_recurrence_map("desired_size").values())
+
+    def max_size(self):
+        ''' :return: recurrence map as max int or none '''
+        return max(self._val_as_recurrence_map("max_size").values())
+
     def instance_type(self):
         return self.get("instance_type")
 
@@ -107,9 +119,3 @@ class Pipeline(dict):
             return {sentinel: int(size)} if str(size).isdigit() else {
                 part.split('@')[1]: int(part.split('@')[0])
                 for part in str(size).split(':')}
-
-    def recurrence_map_as_min_int_or_none(self, key):
-        return min(self._val_as_recurrence_map(key).values())
-
-    def recurrence_map_as_max_int_or_none(self, key):
-        return max(self._val_as_recurrence_map(key).values())
