@@ -90,20 +90,20 @@ class Pipeline(dict):
     def instance_type(self):
         return self.get("instance_type")
 
+    def extra_disk(self):
+        return int(self.get("extra_disk")) if self.has_key("extra_disk") else None
+
     def extra_space(self):
         return int(self.get("extra_space")) if self.has_key("extra_space") else None
 
-    def extra_disk(self):
-        return int(self.get("extra_disk")) if self.has_key("extra_disk") else None
+    def iops(self):
+        return int(self.get("iops")) if self.has_key("iops") else None
 
     def smoke_test(self):
         return is_truthy(self.get("smoke_test", "false"))
 
     def ami(self):
         return self.get("ami")
-
-    def iops(self):
-        return int(self.get("iops")) if self.has_key("iops") else None
 
     def chaos(self):
         return is_truthy(self.get("chaos", "false"))
