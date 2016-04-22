@@ -76,28 +76,40 @@ class Pipeline(dict):
         return self.__getitem__("hostclass")
 
     def get_min_size(self):
-        ''' :return: size as min int or None. For example:
+        ''' :return: min_size as min int or None. For example:
                      - no value, will return: None
                      - simple int value of 5 will return: 5
                      - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 2
         '''
-        return min(self._size_as_recurrence_map("min_size").values())
+        return min(self.get_min_size_as_recurrence_map().values())
+
+    def get_min_size_as_recurrence_map(self):
+        ''' :return: min_size as a recurrence map. Take a look at _get_size_as_recurrence_map() '''
+        return self._size_as_recurrence_map(self.get("min_size"))
 
     def get_desired_size(self):
-        ''' :return: size as max int or None. For example:
+        ''' :return: desired_size as max int or None. For example:
                      - no value, will return: None
                      - simple int value of 5 will return: 5
                      - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 24
         '''
-        return max(self._size_as_recurrence_map("desired_size").values())
+        return max(self.get_desired_size_as_recurrence_map().values())
+
+    def get_desired_size_as_recurrence_map(self):
+        ''' :return: desired_size as a recurrence map. Take a look at _get_size_as_recurrence_map() '''
+        return self._size_as_recurrence_map(self.get("desired_size"))
 
     def get_max_size(self):
-        ''' :return: size as max int or None. For example:
+        ''' :return: max_size as max int or None. For example:
                      - no value, will return: None
                      - simple int value of 5 will return: 5
                      - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 24
         '''
-        return max(self._size_as_recurrence_map("max_size").values())
+        return max(self.get_max_size_as_recurrence_map().values())
+
+    def get_max_size_as_recurrence_map(self):
+        ''' :return: max_size as a recurrence map. Take a look at _get_size_as_recurrence_map() '''
+        return self._size_as_recurrence_map(self.get("max_size"))
 
     def get_instance_type(self):
         return self.get("instance_type")
@@ -126,14 +138,14 @@ class Pipeline(dict):
     def get_termination_policies(self):
         return self.get("termination_policies").split() if self.has_key("termination_policies") else None
 
-    def _size_as_recurrence_map(self, key):
-        ''' :return: size as "recurrence" map For example:
+    @staticmethod
+    def _size_as_recurrence_map(self, size):
+        ''' :return: size as "recurrence" map. For example:
                      - no value, will return: {None: None}
                      - simple int value of 5 will return: {None: 5}
                      - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: {'0 10 * * *': 24,
                                                                                            '0 22 * * *': 2}
         '''
-        size = self.get(key)
         if not size:
             return {None: None}
 

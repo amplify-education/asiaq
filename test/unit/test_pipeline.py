@@ -12,16 +12,12 @@ class PipelineTests(TestCase):
 
     def test_size_as_rec_map_with_none(self):
         """_size_as_recurrence_map works with None"""
-        pipeline = Pipeline({"some_key": None})
-        self.assertEqual(pipeline._size_as_recurrence_map("some_key"), {None: None})
-
-        pipeline = Pipeline({"some_key": ""})
-        self.assertEqual(pipeline._size_as_recurrence_map("some_key"), {None: None})
+        self.assertEqual(Pipeline._size_as_recurrence_map(None), {None: None})
+        self.assertEqual(Pipeline._size_as_recurrence_map(""), {None: None})
 
     def test_size_as_rec_map_with_int(self):
         """_size_as_recurrence_map works with simple integer"""
-        pipeline = Pipeline({"some_key": 5})
-        self.assertEqual(pipeline._size_as_recurrence_map("some_key"),
+        self.assertEqual(Pipeline._size_as_recurrence_map(5),
                          {None: 5})
 
     def test_size_as_rec_map_with_map(self):
@@ -29,13 +25,11 @@ class PipelineTests(TestCase):
         map_as_string = "2@1 0 * * *:3@6 0 * * *"
         map_as_dict = {"1 0 * * *": 2, "6 0 * * *": 3}
 
-        pipeline = Pipeline({"some_key": map_as_string})
-        self.assertEqual(pipeline._size_as_recurrence_map("some_key"), map_as_dict)
+        self.assertEqual(Pipeline._size_as_recurrence_map(map_as_string), map_as_dict)
 
     def test_size_as_rec_map_with_duped_map(self):
         """_size_as_recurrence_map works with a duped map"""
         map_as_string = "2@1 0 * * *:3@6 0 * * *:3@6 0 * * *"
         map_as_dict = {"1 0 * * *": 2, "6 0 * * *": 3}
 
-        pipeline = Pipeline({"some_key": map_as_string})
-        self.assertEqual(pipeline._size_as_recurrence_map("some_key"), map_as_dict)
+        self.assertEqual(Pipeline._size_as_recurrence_map(map_as_string), map_as_dict)
