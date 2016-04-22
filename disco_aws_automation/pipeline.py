@@ -76,15 +76,27 @@ class Pipeline(dict):
         return self.__getitem__("hostclass")
 
     def min_size(self):
-        ''' :return: recurrence map as min int or none '''
+        ''' :return: size as min int or None. For example:
+                     - no value, will return: None
+                     - simple int value of 5 will return: 5
+                     - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 2
+        '''
         return min(self._val_as_recurrence_map("min_size").values())
 
     def desired_size(self):
-        ''' :return: recurrence map as max int or none '''
+        ''' :return: size as max int or None. For example:
+                     - no value, will return: None
+                     - simple int value of 5 will return: 5
+                     - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 24
+        '''
         return max(self._val_as_recurrence_map("desired_size").values())
 
     def max_size(self):
-        ''' :return: recurrence map as max int or none '''
+        ''' :return: size as max int or None. For example:
+                     - no value, will return: None
+                     - simple int value of 5 will return: 5
+                     - timed interval(s), like "2@0 22 * * *:24@0 10 * * *", will return: 24
+        '''
         return max(self._val_as_recurrence_map("max_size").values())
 
     def instance_type(self):
