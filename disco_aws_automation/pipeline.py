@@ -105,6 +105,9 @@ class Pipeline(dict):
     def ami(self):
         return self.get("ami")
 
+    def deployable(self):
+        return is_truthy(self.get("deployable", "false"))
+
     def chaos(self):
         return is_truthy(self.get("chaos", "false"))
 
