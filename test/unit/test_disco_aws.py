@@ -11,6 +11,7 @@ from moto import mock_elb
 
 from disco_aws_automation import DiscoAWS
 from disco_aws_automation.exceptions import TimeoutError, SmokeTestError
+from disco_aws_automation.pipeline import Pipeline
 from test.helpers.patch_disco_aws import (patch_disco_aws,
                                           get_default_config_dict,
                                           get_mock_config,
@@ -39,34 +40,16 @@ class DiscoAWSTests(TestCase):
         self.instance.tags = create_autospec(boto.ec2.tag.TagSet)
         self.instance.id = "i-12345678"
 
-    def test_size_as_rec_map_with_none(self):
-        """_size_as_recurrence_map works with None"""
-        self.assertEqual(DiscoAWS._size_as_recurrence_map(None), {"": None})
-        self.assertEqual(DiscoAWS._size_as_recurrence_map(''), {"": None})
-
-    def test_size_as_rec_map_with_int(self):
-        """_size_as_recurrence_map works with simple integer"""
-        self.assertEqual(DiscoAWS._size_as_recurrence_map(5, sentinel="0 0 * * *"),
-                         {"0 0 * * *": 5})
-
-    def test_size_as_rec_map_with_map(self):
-        """_size_as_recurrence_map works with a map"""
-        map_as_string = "2@1 0 * * *:3@6 0 * * *"
-        map_as_dict = {"1 0 * * *": 2, "6 0 * * *": 3}
-        self.assertEqual(DiscoAWS._size_as_recurrence_map(map_as_string), map_as_dict)
-
-    def test_size_as_rec_map_with_duped_map(self):
-        """_size_as_recurrence_map works with a duped map"""
-        map_as_string = "2@1 0 * * *:3@6 0 * * *:3@6 0 * * *"
-        map_as_dict = {"1 0 * * *": 2, "6 0 * * *": 3}
-        self.assertEqual(DiscoAWS._size_as_recurrence_map(map_as_string), map_as_dict)
-
     @patch_disco_aws
     def test_create_scaling_schedule_only_desired(self, mock_config, **kwargs):
         """test create_scaling_schedule with only desired schedule"""
         aws = DiscoAWS(config=mock_config, environment_name=TEST_ENV_NAME)
         aws.autoscale = MagicMock()
-        aws.create_scaling_schedule("mhcboo", "1", "2@1 0 * * *:3@6 0 * * *", "5")
+        pipeline = Pipeline({"hostclass": "mhcboo",
+                             "min_size": "1",
+                             "desired_size": "2@1 0 * * *:3@6 0 * * *",
+                             "max_size": "5"})
+        aws.create_scaling_schedule(pipeline)
         aws.autoscale.assert_has_calls([
             call.delete_all_recurring_group_actions('mhcboo'),
             call.create_recurring_group_action('mhcboo', '1 0 * * *',
@@ -80,7 +63,11 @@ class DiscoAWSTests(TestCase):
         """test create_scaling_schedule with only desired schedule"""
         aws = DiscoAWS(config=mock_config, environment_name=TEST_ENV_NAME)
         aws.autoscale = MagicMock()
-        aws.create_scaling_schedule("mhcboo", "1", "2", "5")
+        pipeline = Pipeline({"hostclass": "mhcboo",
+                             "min_size": "1",
+                             "desired_size": "2",
+                             "max_size": "5"})
+        aws.create_scaling_schedule(pipeline)
         aws.autoscale.assert_has_calls([call.delete_all_recurring_group_actions('mhcboo')])
 
     @patch_disco_aws
@@ -88,10 +75,11 @@ class DiscoAWSTests(TestCase):
         """test create_scaling_schedule with only desired schedule"""
         aws = DiscoAWS(config=mock_config, environment_name=TEST_ENV_NAME)
         aws.autoscale = MagicMock()
-        aws.create_scaling_schedule("mhcboo",
-                                    "1@1 0 * * *:2@6 0 * * *",
-                                    "2@1 0 * * *:3@6 0 * * *",
-                                    "6@1 0 * * *:9@6 0 * * *")
+        pipeline = Pipeline({"hostclass": "mhcboo",
+                             "min_size": "1@1 0 * * *:2@6 0 * * *",
+                             "desired_size": "2@1 0 * * *:3@6 0 * * *",
+                             "max_size": "6@1 0 * * *:9@6 0 * * *"})
+        aws.create_scaling_schedule(pipeline)
         aws.autoscale.assert_has_calls([
             call.delete_all_recurring_group_actions('mhcboo'),
             call.create_recurring_group_action('mhcboo', '1 0 * * *',
@@ -105,10 +93,11 @@ class DiscoAWSTests(TestCase):
         """test create_scaling_schedule with only desired schedule"""
         aws = DiscoAWS(config=mock_config, environment_name=TEST_ENV_NAME)
         aws.autoscale = MagicMock()
-        aws.create_scaling_schedule("mhcboo",
-                                    "1@1 0 * * *:2@7 0 * * *",
-                                    "2@1 0 * * *:3@6 0 * * *",
-                                    "6@2 0 * * *:9@6 0 * * *")
+        pipeline = Pipeline({"hostclass": "mhcboo",
+                             "min_size": "1@1 0 * * *:2@7 0 * * *",
+                             "desired_size": "2@1 0 * * *:3@6 0 * * *",
+                             "max_size": "6@2 0 * * *:9@6 0 * * *"})
+        aws.create_scaling_schedule(pipeline)
         aws.autoscale.assert_has_calls([
             call.delete_all_recurring_group_actions('mhcboo'),
             call.create_recurring_group_action('mhcboo', '1 0 * * *',
@@ -143,9 +132,13 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        metadata = aws.provision(ami=mock_ami, hostclass="mhcunittest",
-                                                 owner="unittestuser",
-                                                 min_size=1, desired_size=1, max_size=1)
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "1",
+                                             "desired_size": "1",
+                                             "max_size": "1"})
+                        metadata = aws.provision(pipeline,
+                                                 ami=mock_ami,
+                                                 owner="unittestuser")
 
         self.assertEqual(metadata["hostclass"], "mhcunittest")
         self.assertFalse(metadata["no_destroy"])
@@ -175,10 +168,14 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        metadata = aws.provision(ami=mock_ami, hostclass="mhcunittest",
-                                                 owner="unittestuser",
-                                                 min_size=1, desired_size=1, max_size=1,
-                                                 chaos="False")
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "1",
+                                             "desired_size": "1",
+                                             "max_size": "1",
+                                             "chaos": "False"})
+                        metadata = aws.provision(pipeline,
+                                                 ami=mock_ami,
+                                                 owner="unittestuser")
 
         self.assertEqual(metadata["hostclass"], "mhcunittest")
         self.assertFalse(metadata["no_destroy"])
@@ -210,9 +207,13 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        metadata = aws.provision(ami=mock_ami, hostclass="mhcunittest",
-                                                 owner="unittestuser",
-                                                 min_size=1, desired_size=1, max_size=1)
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "1",
+                                             "desired_size": "1",
+                                             "max_size": "1"})
+                        metadata = aws.provision(pipeline,
+                                                 ami=mock_ami,
+                                                 owner="unittestuser")
 
         self.assertEqual(metadata["hostclass"], "mhcunittest")
         self.assertFalse(metadata["no_destroy"])
@@ -241,11 +242,13 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        aws.provision(ami=self._get_image_mock(aws),
-                                      hostclass="mhcunittest", owner="unittestuser",
-                                      min_size="1@1 0 * * *:2@6 0 * * *",
-                                      desired_size="2@1 0 * * *:3@6 0 * * *",
-                                      max_size="6@1 0 * * *:9@6 0 * * *")
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "1@1 0 * * *:2@6 0 * * *",
+                                             "desired_size": "2@1 0 * * *:3@6 0 * * *",
+                                             "max_size": "6@1 0 * * *:9@6 0 * * *"})
+                        aws.provision(pipeline,
+                                      ami=self._get_image_mock(aws),
+                                      owner="unittestuser")
 
         _ag = aws.autoscale.get_groups()[0]
         self.assertEqual(_ag.min_size, 1)  # minimum of listed sizes
@@ -266,10 +269,13 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        aws.provision(ami=self._get_image_mock(aws),
-                                      hostclass="mhcunittest", owner="unittestuser",
-                                      min_size="",
-                                      desired_size="2@1 0 * * *:3@6 0 * * *", max_size="")
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "",
+                                             "desired_size": "2@1 0 * * *:3@6 0 * * *",
+                                             "max_size": ""})
+                        aws.provision(pipeline,
+                                      ami=self._get_image_mock(aws),
+                                      owner="unittestuser")
 
         _ag = aws.autoscale.get_groups()[0]
         print("({0}, {1}, {2})".format(_ag.min_size, _ag.desired_capacity, _ag.max_size))
@@ -291,9 +297,13 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        aws.provision(ami=self._get_image_mock(aws),
-                                      hostclass="mhcunittest", owner="unittestuser",
-                                      min_size="", desired_size="", max_size="")
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "",
+                                             "desired_size": "",
+                                             "max_size": ""})
+                        aws.provision(pipeline,
+                                      ami=self._get_image_mock(aws),
+                                      owner="unittestuser")
 
         _ag0 = aws.autoscale.get_groups()[0]
 
@@ -306,9 +316,13 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        aws.provision(ami=self._get_image_mock(aws),
-                                      hostclass="mhcunittest", owner="unittestuser",
-                                      min_size="3", desired_size="6", max_size="9")
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "3",
+                                             "desired_size": "6",
+                                             "max_size": "9"})
+                        aws.provision(pipeline,
+                                      ami=self._get_image_mock(aws),
+                                      owner="unittestuser")
 
         _ag1 = aws.autoscale.get_groups()[0]
 
@@ -321,9 +335,13 @@ class DiscoAWSTests(TestCase):
                 with patch("disco_aws_automation.DiscoAWS.create_scaling_schedule", return_value=None):
                     with patch("boto.ec2.autoscale.AutoScaleConnection.create_or_update_tags",
                                return_value=None):
-                        aws.provision(ami=self._get_image_mock(aws),
-                                      hostclass="mhcunittest", owner="unittestuser",
-                                      min_size="", desired_size="", max_size="")
+                        pipeline = Pipeline({"hostclass": "mhcunittest",
+                                             "min_size": "",
+                                             "desired_size": "",
+                                             "max_size": ""})
+                        aws.provision(pipeline,
+                                      ami=self._get_image_mock(aws),
+                                      owner="unittestuser")
 
         _ag2 = aws.autoscale.get_groups()[0]
 
