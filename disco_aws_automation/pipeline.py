@@ -18,8 +18,7 @@ def pipelines_from_file(pipeline_definition_filename):
 
 
 class Pipeline(dict):
-    '''Class encapsulating a pipeline.
-       This class looks and acts just like a dict with some additional functions specific to a pipeline.
+    '''Class encapsulating a pipeline with some additional helper functions specific to a pipeline.
 
        An example pipeline format:
 
@@ -33,6 +32,7 @@ class Pipeline(dict):
           "extra_space": None,
           "iops": None,
           "smoke_test": "true",
+          "integration_test": "testscriptparams",
           "ami": None,
           "deployable": "true",
           "termination_policies": None,
@@ -125,6 +125,9 @@ class Pipeline(dict):
 
     def get_smoke_test(self):
         return is_truthy(self.get("smoke_test", "false"))
+
+    def get_integration_test(self):
+        return self.get("integration_test")
 
     def get_ami(self):
         return self.get("ami")
