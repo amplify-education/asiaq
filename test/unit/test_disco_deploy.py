@@ -15,6 +15,7 @@ from test.helpers.patch_disco_aws import get_mock_config
 # Don't limit number of tests
 # pylint: disable=R0904
 
+# skim create one with a recurrence map for size
 MOCK_PIPELINE_DEFINITION = [
     {
         'hostclass': 'mhcintegrated',

@@ -12,6 +12,7 @@ from . import DiscoBake, read_config
 from .exceptions import TimeoutError, MaintenanceModeError, IntegrationTestError, SmokeTestError
 from .disco_aws_util import is_truthy
 from .disco_constants import DEFAULT_CONFIG_SECTION
+from .pipeline import Pipeline
 
 
 def snap_to_range(val, mini, maxi):
@@ -23,7 +24,7 @@ class DiscoDeploy(object):
     '''DiscoDeploy takes care of testing, promoting and deploying the latests AMIs'''
 
     # pylint: disable=too-many-arguments
-    def __init__(self, aws, test_aws, bake, pipeline_definition,
+    def __init__(self, aws, test_aws, bake, pipelines,
                  ami=None, hostclass=None, allow_any_hostclass=False, config=None):
         '''
         Constructor for DiscoDeploy
@@ -31,7 +32,7 @@ class DiscoDeploy(object):
         :param aws a DiscoAWS instance to use
         :param test_aws DiscoAWS instance for integration tests. may be different environment than "aws" param
         :param bake a DiscoBake instance to use
-        :param pipeline_definition a list of dicts containing hostname, deployable and other pipeline values
+        :param pipelines a list of Pipeline instances
         :param allow_any_hostclass do not restrict to hostclasses in the pipeline definition
         :param config: Configuration object to use.
         '''
@@ -43,19 +44,20 @@ class DiscoDeploy(object):
         self._test_aws = test_aws
         self._disco_bake = bake
         self._all_stage_amis = None
-        self._hostclasses = self._get_hostclasses_from_pipeline_definition(pipeline_definition)
+        self._hostclass_to_pipeline_map = self._create_hostclass_to_pipeline_map(pipelines)
         self._allow_any_hostclass = allow_any_hostclass
 
-    def _get_hostclasses_from_pipeline_definition(self, pipeline_definition):
-        ''' Return hostclasses from pipeline definitions, validating numeric input '''
-        hostclasses = {entry["hostclass"]: entry for entry in pipeline_definition}
+    def _create_hostclass_to_pipeline_map(self, pipelines):
+        ''' Return map of hostclass to pipeline from pipelines, validating numeric input '''
+        hostclass_to_pipeline_map = {}
+        for pipeline in pipelines:
+            # if size exists, validate that it's an int
+            for size in [pipeline.get_min_size(), pipeline.get_desired_size(), pipeline.get_max_size()]:
+                if size:
+                    int(size)
+            hostclass_to_pipeline_map[pipeline.get_hostclass()] = pipeline
 
-        for hostclass, entry in hostclasses.iteritems():
-            for definition in ["max_size", "desired_size", "min_size"]:
-                if definition in entry:
-                    hostclasses[hostclass][definition] = int(entry[definition])
-
-        return hostclasses
+        return hostclass_to_pipeline_map
 
     def _filter_amis(self, amis):
         if self._restrict_amis:
@@ -63,7 +65,7 @@ class DiscoDeploy(object):
         elif self._restrict_hostclass:
             return [ami for ami in amis if DiscoBake.ami_hostclass(ami) == self._restrict_hostclass]
         elif not self._allow_any_hostclass:
-            return [ami for ami in amis if DiscoBake.ami_hostclass(ami) in self._hostclasses]
+            return [ami for ami in amis if DiscoBake.ami_hostclass(ami) in self._hostclass_to_pipeline_map]
         else:
             return amis
 
@@ -161,19 +163,18 @@ class DiscoDeploy(object):
             self.get_latest_tested_amis(), self.get_latest_untagged_amis())
         newer = self.get_items_newer_in_second_map(self.get_latest_running_amis(), available)
         return [ami for ami in newer
-                if (DiscoBake.ami_hostclass(ami) in self._hostclasses and
+                if (DiscoBake.ami_hostclass(ami) in self._hostclass_to_pipeline_map and
                     self.is_deployable(DiscoBake.ami_hostclass(ami)))]
 
     def is_deployable(self, hostclass):
         """Returns true for all hostclasses which aren't tagged as non-ZDD hostclasses"""
-        return ((hostclass in self._hostclasses and
-                 is_truthy(self._hostclasses[hostclass].get("deployable"))) or
-                hostclass not in self._hostclasses)
+        pipeline = self._hostclass_to_pipeline_map.get(hostclass)
+        return ((pipeline and pipeline.get_deployable()) or not pipeline)
 
     def get_integration_test(self, hostclass):
         """Returns the integration test for this hostclass, or None if none exists"""
-        return (hostclass in self._hostclasses and
-                self._hostclasses[hostclass].get("integration_test")) or None
+        pipeline = self._hostclass_to_pipeline_map.get(hostclass)
+        return (pipeline and pipeline.get_integration_test()) or None
 
     def wait_for_smoketests(self, ami_id, min_count):
         '''
@@ -221,7 +222,7 @@ class DiscoDeploy(object):
         except:
             logging.exception("promotion failed")
 
-    def handle_nodeploy_ami(self, old_hostclass_dict, ami, desired_size, dry_run):
+    def handle_nodeploy_ami(self, old_pipeline, ami, desired_size, dry_run):
         '''Promotes a non-deployable host and updates the autoscaling group to use it next time
 
         A host is launched in testing mode and if it passes smoketests it is promoted and
@@ -231,47 +232,46 @@ class DiscoDeploy(object):
         are not replaced by the new AMI.
 
         '''
-        if not old_hostclass_dict:
-            old_hostclass_dict = {"hostclass": DiscoBake.ami_hostclass(ami)}
+        if not old_pipeline:
+            old_pipeline = Pipeline({"hostclass": DiscoBake.ami_hostclass(ami)})
 
-        logging.info("Smoke testing non-deploy Hostclass %s AMI %s", old_hostclass_dict["hostclass"], ami.id)
+        logging.info("Smoke testing non-deploy Hostclass %s AMI %s", old_pipeline.get_hostclass(), ami.id)
 
         if dry_run:
             return
 
         new_size = desired_size * 2 if desired_size else 1
-        new_hostclass_dict = copy.deepcopy(old_hostclass_dict)
-        new_hostclass_dict["sequence"] = 1
-        new_hostclass_dict["max_size"] = new_size
-        new_hostclass_dict["min_size"] = new_size / 2
-        new_hostclass_dict["desired_size"] = new_size
-        new_hostclass_dict["smoke_test"] = "no"
-        new_hostclass_dict["ami"] = ami.id
-        rollback_hostclass_dict = copy.deepcopy(old_hostclass_dict)
+        new_pipeline = copy.deepcopy(old_pipeline)
+        new_pipeline["sequence"] = 1
+        new_pipeline["max_size"] = new_size
+        new_pipeline["min_size"] = new_size / 2
+        new_pipeline["desired_size"] = new_size
+        new_pipeline["smoke_test"] = "no"
+        new_pipeline["ami"] = ami.id
+        rollback_pipeline = copy.deepcopy(old_pipeline)
 
-        self._disco_aws.spinup([new_hostclass_dict], testing=True)
+        self._disco_aws.spinup([new_pipeline], testing=True)
 
-        rollback_hostclass_dict["sequence"] = 1
-        rollback_hostclass_dict["smoke_test"] = "no"
-        rollback_hostclass_dict["max_size"] = old_hostclass_dict.get("max_size", desired_size)
-        rollback_hostclass_dict["min_size"] = old_hostclass_dict.get("min_size", desired_size)
-        rollback_hostclass_dict["desired_size"] = old_hostclass_dict.get("desired_size", desired_size)
-        rollback_hostclass_dict["desired_size"] = snap_to_range(
-            rollback_hostclass_dict["desired_size"],
-            rollback_hostclass_dict["min_size"], rollback_hostclass_dict["max_size"])
+        rollback_pipeline["sequence"] = 1
+        rollback_pipeline["smoke_test"] = "no"
+        rollback_pipeline["max_size"] = old_pipeline.get_max_size() or desired_size
+        rollback_pipeline["min_size"] = old_pipeline.get_min_size() or desired_size
+        rollback_pipeline["desired_size"] = old_pipeline.get_desired_size() or desired_size
+        rollback_pipeline["desired_size"] = snap_to_range(rollback_pipeline.get_desired_size(),
+            rollback_pipeline.get_min_size(), rollback_pipeline.get_max_size())
 
         if self.wait_for_smoketests(ami.id, desired_size or 1):
             self._promote_ami(ami, "tested")
-            rollback_hostclass_dict["ami"] = ami.id
+            rollback_pipeline["ami"] = ami.id
         else:
             self._promote_ami(ami, "failed")
-            rollback_hostclass_dict.pop("ami", None)
+            rollback_pipeline.pop("ami", None)
 
-        if rollback_hostclass_dict["desired_size"]:
+        if rollback_pipeline.get_desired_size():
             self._disco_aws.terminate(self._get_new_instances(ami.id), use_autoscaling=True)
-            self._disco_aws.spinup([rollback_hostclass_dict])
+            self._disco_aws.spinup([rollback_pipeline])
         else:
-            self._disco_aws.autoscale.delete_group(rollback_hostclass_dict["hostclass"], force=True)
+            self._disco_aws.autoscale.delete_group(rollback_pipeline.get_hostclass(), force=True)
 
     def _get_old_instances(self, new_ami_id):
         '''Returns instances of the hostclass of new_ami_id that are not running new_ami_id'''
@@ -323,7 +323,7 @@ class DiscoDeploy(object):
             self._set_maintenance_mode(hostclass, self._get_old_instances(ami.id), False)
         return ret
 
-    def handle_tested_ami(self, old_hostclass_dict, ami, desired_size,
+    def handle_tested_ami(self, old_pipeline, ami, desired_size,
                           run_tests=False, dry_run=False):
         '''
         Tests hostclasses which we can deploy normally
@@ -332,7 +332,7 @@ class DiscoDeploy(object):
         otherwise we roll back to the previous AMI.
 
         '''
-        logging.info("testing deployable hostclass %s AMI %s", old_hostclass_dict["hostclass"], ami.id)
+        logging.info("testing deployable hostclass %s AMI %s", old_pipeline.get_hostclass(), ami.id)
 
         if dry_run:
             return
@@ -341,27 +341,27 @@ class DiscoDeploy(object):
             raise Exception("Failed pre-test -- not testing AMI {}".format(ami.id))
 
         new_size = desired_size * 2 if desired_size else 1
-        new_hostclass_dict = copy.deepcopy(old_hostclass_dict)
-        new_hostclass_dict["sequence"] = 1
-        new_hostclass_dict["max_size"] = new_size
-        new_hostclass_dict["min_size"] = new_size / 2
-        new_hostclass_dict["desired_size"] = new_size
-        new_hostclass_dict["smoke_test"] = "no"
-        new_hostclass_dict["ami"] = ami.id
-        post_hostclass_dict = copy.deepcopy(new_hostclass_dict)
+        new_pipeline = copy.deepcopy(old_pipeline)
+        new_pipeline["sequence"] = 1
+        new_pipeline["max_size"] = new_size
+        new_pipeline["min_size"] = new_size / 2
+        new_pipeline["desired_size"] = new_size
+        new_pipeline["smoke_test"] = "no"
+        new_pipeline["ami"] = ami.id
+        post_pipeline = copy.deepcopy(new_pipeline)
 
-        self._disco_aws.spinup([new_hostclass_dict])
+        self._disco_aws.spinup([new_pipeline])
 
         try:
             if (self.wait_for_smoketests(ami.id, desired_size or 1) and
                     (not run_tests or self.run_tests_with_maintenance_mode(ami))):
                 # Roll forward with new configuration
-                post_hostclass_dict["max_size"] = old_hostclass_dict.get("max_size") or desired_size
-                post_hostclass_dict["min_size"] = old_hostclass_dict.get("min_size") or desired_size
-                post_hostclass_dict["desired_size"] = snap_to_range(
-                    desired_size, post_hostclass_dict["min_size"], post_hostclass_dict["max_size"])
+                post_pipeline["max_size"] = old_pipeline.get_max_size() or desired_size
+                post_pipeline["min_size"] = old_pipeline.get_min_size() or desired_size
+                post_pipeline["desired_size"] = snap_to_range(
+                    desired_size, post_pipeline.get_min_size(), post_pipeline.get_max_size())
                 self._disco_aws.terminate(self._get_old_instances(ami.id), use_autoscaling=True)
-                self._disco_aws.spinup([post_hostclass_dict])
+                self._disco_aws.spinup([post_pipeline])
                 self._promote_ami(ami, "tested")
                 return
             else:
@@ -370,22 +370,22 @@ class DiscoDeploy(object):
             logging.exception("Failed to run integration test")
 
         # Revert to old configuration
-        post_hostclass_dict = copy.deepcopy(old_hostclass_dict)
-        post_hostclass_dict["max_size"] = old_hostclass_dict.get("max_size") or desired_size
-        post_hostclass_dict["min_size"] = old_hostclass_dict.get("min_size") or desired_size
-        post_hostclass_dict["desired_size"] = snap_to_range(
-            desired_size, post_hostclass_dict["min_size"], post_hostclass_dict["max_size"])
-        post_hostclass_dict["smoke_test"] = "no"
+        post_pipeline = copy.deepcopy(old_pipeline)
+        post_pipeline["max_size"] = old_pipeline.get_max_size() or desired_size
+        post_pipeline["min_size"] = old_pipeline.get_min_size() or desired_size
+        post_pipeline["desired_size"] = snap_to_range(
+            desired_size, post_pipeline.get_min_size(), post_pipeline.get_max_size())
+        post_pipeline["smoke_test"] = "no"
 
         # Revert to the latest tested AMI if possible
         old_ami_id = self._get_latest_other_image_id(ami.id)
         if old_ami_id:
-            post_hostclass_dict["ami"] = old_ami_id
+            post_pipeline["ami"] = old_ami_id
         else:
             logging.error("Unable to rollback to old AMI. Autoscaling group will use new AMI on next event!")
 
         self._disco_aws.terminate(self._get_new_instances(ami.id), use_autoscaling=True)
-        self._disco_aws.spinup([post_hostclass_dict])
+        self._disco_aws.spinup([post_pipeline])
 
     def _set_maintenance_mode(self, hostclass, instances, mode_on):
         '''
@@ -443,18 +443,18 @@ class DiscoDeploy(object):
         '''Handles testing and promoting a new AMI for a hostclass'''
         logging.info("testing %s %s", ami.id, ami.name)
         hostclass = DiscoBake.ami_hostclass(ami)
-        old_hostclass_dict = self._hostclasses.get(hostclass)
+        old_pipeline = self._hostclass_to_pipeline_map.get(hostclass)
         group = self._disco_aws.autoscale.get_existing_group(hostclass)
         desired_capacity = group.desired_capacity if group else 0
         if not self.is_deployable(hostclass):
             self.handle_nodeploy_ami(
-                old_hostclass_dict, ami, desired_capacity, dry_run=dry_run)
+                old_pipeline, ami, desired_capacity, dry_run=dry_run)
         elif self.get_integration_test(hostclass):
             self.handle_tested_ami(
-                old_hostclass_dict, ami, desired_capacity, run_tests=True, dry_run=dry_run)
-        elif old_hostclass_dict:
+                old_pipeline, ami, desired_capacity, run_tests=True, dry_run=dry_run)
+        elif old_pipeline:
             self.handle_tested_ami(
-                old_hostclass_dict, ami, desired_capacity, dry_run=dry_run)
+                old_pipeline, ami, desired_capacity, dry_run=dry_run)
         else:
             self.handle_nodeploy_ami(None, ami, 0, dry_run=dry_run)
 
@@ -462,17 +462,17 @@ class DiscoDeploy(object):
         '''Handles updating a hostclass to the latest tested AMI'''
         logging.info("updating %s %s", ami.id, ami.name)
         hostclass = DiscoBake.ami_hostclass(ami)
-        old_hostclass_dict = self._hostclasses.get(hostclass)
-        if not old_hostclass_dict:
+        old_pipeline = self._hostclass_to_pipeline_map.get(hostclass)
+        if not old_pipeline:
             return
 
         group = self._disco_aws.autoscale.get_existing_group(hostclass)
-        desired_capacity = group.desired_capacity if group else old_hostclass_dict.get("desired_size", 0)
+        desired_capacity = group.desired_capacity if group else old_pipeline.get_desired_size() or 0
 
         if not self.is_deployable(hostclass):
-            self.handle_nodeploy_ami(old_hostclass_dict, ami, desired_capacity, dry_run=dry_run)
+            self.handle_nodeploy_ami(old_pipeline, ami, desired_capacity, dry_run=dry_run)
         else:
-            self.handle_tested_ami(old_hostclass_dict, ami, desired_capacity, dry_run=dry_run)
+            self.handle_tested_ami(old_pipeline, ami, desired_capacity, dry_run=dry_run)
 
     def test(self, dry_run=False):
         '''Tests a single untested AMI and marks it as tested or failed'''
