@@ -341,10 +341,8 @@ class DiscoAWS(object):
         self.create_floating_interfaces(meta_network, pipeline.get_hostclass())
 
         elb = self.update_elb(pipeline.get_hostclass(), update_autoscaling=False)
-
-        chaos = pipeline.get_chaos()
-        if chaos is None:
-            chaos = is_truthy(self.hostclass_option_default(pipeline.get_hostclass(), "chaos", "True"))
+        chaos = pipeline.get_chaos(default_val=
+                                   is_truthy(self.hostclass_option_default(pipeline.get_hostclass(), "chaos", "True")))
 
         group = self.autoscale.get_group(
             hostclass=pipeline.get_hostclass(),
