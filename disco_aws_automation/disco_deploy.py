@@ -202,7 +202,7 @@ class DiscoDeploy(object):
 
     # Disable W0702 We want to swallow all the exceptions here
     # pylint: disable=W0702
-    def _promote_ami(self, ami, stage):
+    def _promote_ami(self, ami_obj, stage):
         """
         Promote AMI to specified stage. And, conditionally, make executable by
         production account if ami is staged as tested.
@@ -212,17 +212,17 @@ class DiscoDeploy(object):
         promote_conditions = [
             stage == "tested",
             prod_baker,
-            ami.tags.get("baker") == prod_baker,
+            ami_obj.tags.get("baker") == prod_baker,
         ]
 
         try:
-            self._disco_bake.promote_ami(ami, stage)
+            self._disco_bake.promote_ami(ami_obj, stage)
             if all(promote_conditions):
-                self._disco_bake.promote_ami_to_production(ami)
+                self._disco_bake.promote_ami_to_production(ami_obj)
         except:
             logging.exception("promotion failed")
 
-    def handle_nodeploy_ami(self, old_pipeline, ami, desired_size, dry_run):
+    def handle_nodeploy_ami(self, old_pipeline, ami_obj, desired_size, dry_run):
         '''Promotes a non-deployable host and updates the autoscaling group to use it next time
 
         A host is launched in testing mode and if it passes smoketests it is promoted and
@@ -233,9 +233,9 @@ class DiscoDeploy(object):
 
         '''
         if not old_pipeline:
-            old_pipeline = Pipeline({"hostclass": DiscoBake.ami_hostclass(ami)})
+            old_pipeline = Pipeline({"hostclass": DiscoBake.ami_hostclass(ami_obj)})
 
-        logging.info("Smoke testing non-deploy Hostclass %s AMI %s", old_pipeline.get_hostclass(), ami.id)
+        logging.info("Smoke testing non-deploy Hostclass %s AMI %s", old_pipeline.get_hostclass(), ami_obj.id)
 
         if dry_run:
             return
@@ -247,7 +247,7 @@ class DiscoDeploy(object):
         new_pipeline["min_size"] = new_size / 2
         new_pipeline["desired_size"] = new_size
         new_pipeline["smoke_test"] = "no"
-        new_pipeline["ami"] = ami.id
+        new_pipeline["ami"] = ami_obj.id
         rollback_pipeline = copy.deepcopy(old_pipeline)
 
         self._disco_aws.spinup([new_pipeline], testing=True)
@@ -260,15 +260,15 @@ class DiscoDeploy(object):
         rollback_pipeline["desired_size"] = snap_to_range(rollback_pipeline.get_desired_size(),
             rollback_pipeline.get_min_size(), rollback_pipeline.get_max_size())
 
-        if self.wait_for_smoketests(ami.id, desired_size or 1):
-            self._promote_ami(ami, "tested")
-            rollback_pipeline["ami"] = ami.id
+        if self.wait_for_smoketests(ami_obj.id, desired_size or 1):
+            self._promote_ami(ami_obj, "tested")
+            rollback_pipeline["ami"] = ami_obj.id
         else:
-            self._promote_ami(ami, "failed")
+            self._promote_ami(ami_obj, "failed")
             rollback_pipeline.pop("ami", None)
 
         if rollback_pipeline.get_desired_size():
-            self._disco_aws.terminate(self._get_new_instances(ami.id), use_autoscaling=True)
+            self._disco_aws.terminate(self._get_new_instances(ami_obj.id), use_autoscaling=True)
             self._disco_aws.spinup([rollback_pipeline])
         else:
             self._disco_aws.autoscale.delete_group(rollback_pipeline.get_hostclass(), force=True)
@@ -323,7 +323,7 @@ class DiscoDeploy(object):
             self._set_maintenance_mode(hostclass, self._get_old_instances(ami.id), False)
         return ret
 
-    def handle_tested_ami(self, old_pipeline, ami, desired_size,
+    def handle_tested_ami(self, old_pipeline, ami_obj, desired_size,
                           run_tests=False, dry_run=False):
         '''
         Tests hostclasses which we can deploy normally
@@ -332,13 +332,13 @@ class DiscoDeploy(object):
         otherwise we roll back to the previous AMI.
 
         '''
-        logging.info("testing deployable hostclass %s AMI %s", old_pipeline.get_hostclass(), ami.id)
+        logging.info("testing deployable hostclass %s AMI %s", old_pipeline.get_hostclass(), ami_obj.id)
 
         if dry_run:
             return
 
-        if desired_size and run_tests and not self.run_integration_tests(ami):
-            raise Exception("Failed pre-test -- not testing AMI {}".format(ami.id))
+        if desired_size and run_tests and not self.run_integration_tests(ami_obj):
+            raise Exception("Failed pre-test -- not testing AMI {}".format(ami_obj.id))
 
         new_size = desired_size * 2 if desired_size else 1
         new_pipeline = copy.deepcopy(old_pipeline)
@@ -347,25 +347,25 @@ class DiscoDeploy(object):
         new_pipeline["min_size"] = new_size / 2
         new_pipeline["desired_size"] = new_size
         new_pipeline["smoke_test"] = "no"
-        new_pipeline["ami"] = ami.id
+        new_pipeline["ami"] = ami_obj.id
         post_pipeline = copy.deepcopy(new_pipeline)
 
         self._disco_aws.spinup([new_pipeline])
 
         try:
-            if (self.wait_for_smoketests(ami.id, desired_size or 1) and
-                    (not run_tests or self.run_tests_with_maintenance_mode(ami))):
+            if (self.wait_for_smoketests(ami_obj.id, desired_size or 1) and
+                    (not run_tests or self.run_tests_with_maintenance_mode(ami_obj))):
                 # Roll forward with new configuration
                 post_pipeline["max_size"] = old_pipeline.get_max_size() or desired_size
                 post_pipeline["min_size"] = old_pipeline.get_min_size() or desired_size
                 post_pipeline["desired_size"] = snap_to_range(
                     desired_size, post_pipeline.get_min_size(), post_pipeline.get_max_size())
-                self._disco_aws.terminate(self._get_old_instances(ami.id), use_autoscaling=True)
+                self._disco_aws.terminate(self._get_old_instances(ami_obj.id), use_autoscaling=True)
                 self._disco_aws.spinup([post_pipeline])
-                self._promote_ami(ami, "tested")
+                self._promote_ami(ami_obj, "tested")
                 return
             else:
-                self._promote_ami(ami, "failed")
+                self._promote_ami(ami_obj, "failed")
         except (MaintenanceModeError, IntegrationTestError):
             logging.exception("Failed to run integration test")
 
@@ -378,13 +378,13 @@ class DiscoDeploy(object):
         post_pipeline["smoke_test"] = "no"
 
         # Revert to the latest tested AMI if possible
-        old_ami_id = self._get_latest_other_image_id(ami.id)
+        old_ami_id = self._get_latest_other_image_id(ami_obj.id)
         if old_ami_id:
             post_pipeline["ami"] = old_ami_id
         else:
             logging.error("Unable to rollback to old AMI. Autoscaling group will use new AMI on next event!")
 
-        self._disco_aws.terminate(self._get_new_instances(ami.id), use_autoscaling=True)
+        self._disco_aws.terminate(self._get_new_instances(ami_obj.id), use_autoscaling=True)
         self._disco_aws.spinup([post_pipeline])
 
     def _set_maintenance_mode(self, hostclass, instances, mode_on):
@@ -439,29 +439,29 @@ class DiscoDeploy(object):
         sys.stdout.write(stdout)
         return exit_code == 0
 
-    def test_ami(self, ami, dry_run):
+    def test_ami(self, ami_obj, dry_run):
         '''Handles testing and promoting a new AMI for a hostclass'''
-        logging.info("testing %s %s", ami.id, ami.name)
-        hostclass = DiscoBake.ami_hostclass(ami)
+        logging.info("testing %s %s", ami_obj.id, ami_obj.name)
+        hostclass = DiscoBake.ami_hostclass(ami_obj)
         old_pipeline = self._hostclass_to_pipeline_map.get(hostclass)
         group = self._disco_aws.autoscale.get_existing_group(hostclass)
         desired_capacity = group.desired_capacity if group else 0
         if not self.is_deployable(hostclass):
             self.handle_nodeploy_ami(
-                old_pipeline, ami, desired_capacity, dry_run=dry_run)
+                old_pipeline, ami_obj, desired_capacity, dry_run=dry_run)
         elif self.get_integration_test(hostclass):
             self.handle_tested_ami(
-                old_pipeline, ami, desired_capacity, run_tests=True, dry_run=dry_run)
+                old_pipeline, ami_obj, desired_capacity, run_tests=True, dry_run=dry_run)
         elif old_pipeline:
             self.handle_tested_ami(
-                old_pipeline, ami, desired_capacity, dry_run=dry_run)
+                old_pipeline, ami_obj, desired_capacity, dry_run=dry_run)
         else:
-            self.handle_nodeploy_ami(None, ami, 0, dry_run=dry_run)
+            self.handle_nodeploy_ami(None, ami_obj, 0, dry_run=dry_run)
 
-    def update_ami(self, ami, dry_run):
+    def update_ami(self, ami_obj, dry_run):
         '''Handles updating a hostclass to the latest tested AMI'''
-        logging.info("updating %s %s", ami.id, ami.name)
-        hostclass = DiscoBake.ami_hostclass(ami)
+        logging.info("updating %s %s", ami_obj.id, ami_obj.name)
+        hostclass = DiscoBake.ami_hostclass(ami_obj)
         old_pipeline = self._hostclass_to_pipeline_map.get(hostclass)
         if not old_pipeline:
             return
@@ -470,21 +470,21 @@ class DiscoDeploy(object):
         desired_capacity = group.desired_capacity if group else old_pipeline.get_desired_size() or 0
 
         if not self.is_deployable(hostclass):
-            self.handle_nodeploy_ami(old_pipeline, ami, desired_capacity, dry_run=dry_run)
+            self.handle_nodeploy_ami(old_pipeline, ami_obj, desired_capacity, dry_run=dry_run)
         else:
-            self.handle_tested_ami(old_pipeline, ami, desired_capacity, dry_run=dry_run)
+            self.handle_tested_ami(old_pipeline, ami_obj, desired_capacity, dry_run=dry_run)
 
     def test(self, dry_run=False):
         '''Tests a single untested AMI and marks it as tested or failed'''
-        amis = self.get_test_amis()
-        if len(amis):
-            self.test_ami(random.choice(amis), dry_run)
+        ami_objs = self.get_test_amis()
+        if len(ami_objs):
+            self.test_ami(random.choice(ami_objs), dry_run)
 
     def update(self, dry_run=False):
         '''Updates a single autoscaling group with a newer AMI'''
-        amis = self.get_update_amis()
-        if len(amis):
-            self.update_ami(random.choice(amis), dry_run)
+        ami_objs = self.get_update_amis()
+        if len(ami_objs):
+            self.update_ami(random.choice(ami_objs), dry_run)
 
     def hostclass_option(self, hostclass, key):
         '''
