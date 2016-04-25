@@ -115,13 +115,13 @@ class Pipeline(dict):
         return self.get("instance_type")
 
     def get_extra_disk(self):
-        return int(self.get("extra_disk")) if self.has_key("extra_disk") else None
+        return int(self.get("extra_disk")) if self.__contains__("extra_disk") else None
 
     def get_extra_space(self):
-        return int(self.get("extra_space")) if self.has_key("extra_space") else None
+        return int(self.get("extra_space")) if self.__contains__("extra_space") else None
 
     def get_iops(self):
-        return int(self.get("iops")) if self.has_key("iops") else None
+        return int(self.get("iops")) if self.__contains__("iops") else None
 
     def get_smoke_test(self):
         return is_truthy(self.get("smoke_test", "false"))
@@ -136,10 +136,10 @@ class Pipeline(dict):
         return is_truthy(self.get("deployable", "false"))
 
     def get_chaos(self, default_val=False):
-        return is_truthy(self.get("chaos")) if self.has_key("chaos") else default_val
+        return is_truthy(self.get("chaos")) if self.__contains__("chaos") else default_val
 
     def get_termination_policies(self):
-        return self.get("termination_policies").split() if self.has_key("termination_policies") else None
+        return self.get("termination_policies").split() if self.__contains__("termination_policies") else None
 
     @staticmethod
     def _size_as_recurrence_map(self, size):
