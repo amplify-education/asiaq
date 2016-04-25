@@ -553,7 +553,7 @@ class DiscoAWS(object):
             if not pipeline["ami_obj"]:
                 raise AMIError(
                     "Couldn't find AMI {0} for hostclass {1}, aborting spinup.".format(
-                        pipeline.get("ami"), pipeline.get("hostclass")))
+                        pipeline.get_ami(), pipeline.get_hostclass()))
             pipeline["hostclass"] = DiscoBake.ami_hostclass(pipeline["ami_obj"])
 
         # create cloudwatch metrics and alarms
