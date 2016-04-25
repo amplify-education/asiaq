@@ -557,11 +557,11 @@ class DiscoAWS(object):
             pipeline["hostclass"] = DiscoBake.ami_hostclass(pipeline["ami_obj"])
 
         # create cloudwatch metrics and alarms
-        self.spinup_alarms([pipeline.hostclass for pipeline in pipelines])
+        self.spinup_alarms([pipeline.get_hostclass() for pipeline in pipelines])
 
         # determine which subset of hostclasses will need smoke testing
         flammable = set([]) if no_smoke else set(
-            [pipeline.hostclass for pipeline in pipelines if pipeline.smoke_test]
+            [pipeline.get_hostclass() for pipeline in pipelines if pipeline.get_smoke_test()]
         )
 
         # sort pipelines by sequence
