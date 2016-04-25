@@ -258,7 +258,8 @@ class DiscoDeploy(object):
         rollback_pipeline["min_size"] = old_pipeline.get_min_size() or desired_size
         rollback_pipeline["desired_size"] = old_pipeline.get_desired_size() or desired_size
         rollback_pipeline["desired_size"] = snap_to_range(rollback_pipeline.get_desired_size(),
-            rollback_pipeline.get_min_size(), rollback_pipeline.get_max_size())
+                                                          rollback_pipeline.get_min_size(),
+                                                          rollback_pipeline.get_max_size())
 
         if self.wait_for_smoketests(ami_obj.id, desired_size or 1):
             self._promote_ami(ami_obj, "tested")
