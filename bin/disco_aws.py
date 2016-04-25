@@ -247,8 +247,7 @@ def run():
                              "min_size": args.min_size,
                              "desired_size": args.desired_size,
                              "max_size": args.max_size,
-                             "chaos": "no" if args.no_chaos else None
-                            })
+                             "chaos": "no" if args.no_chaos else None})
         aws.spinup([pipeline], testing=args.testing)
     elif args.mode == "listhosts":
         instances = aws.instances_from_hostclass(args.hostclass) if args.hostclass else aws.instances()
@@ -337,7 +336,8 @@ def run():
         pipelines = pipelines_from_file(args.pipeline_definition_file)
         aws.spinup(pipelines, stage=args.stage, no_smoke=args.no_smoke, testing=args.testing)
     elif args.mode == "spindown":
-        hostclasses = [pipeline.get_hostclass() for pipeline in pipelines_from_file(args.pipeline_definition_file)]
+        pipelines = pipelines_from_file(args.pipeline_definition_file)
+        hostclasses = [pipeline.get_hostclass() for pipeline in pipelines]
         aws.spindown(hostclasses)
     elif args.mode == "spindownandup":
         pipelines = pipelines_from_file(args.pipeline_definition_file)
