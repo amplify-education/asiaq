@@ -337,11 +337,11 @@ def run():
         pipelines = pipelines_from_file(args.pipeline_definition_file)
         aws.spinup(pipelines, stage=args.stage, no_smoke=args.no_smoke, testing=args.testing)
     elif args.mode == "spindown":
-        hostclasses = [pipeline["hostclass"] for pipeline in pipelines_from_file(args.pipeline_definition_file)]
+        hostclasses = [pipeline.get_hostclass() for pipeline in pipelines_from_file(args.pipeline_definition_file)]
         aws.spindown(hostclasses)
     elif args.mode == "spindownandup":
         pipelines = pipelines_from_file(args.pipeline_definition_file)
-        hostclasses = [pipeline["hostclass"] for pipeline in pipelines]
+        hostclasses = [pipeline.get_hostclass() for pipeline in pipelines]
         aws.spindown(hostclasses)
         aws.spinup(pipelines)
     elif args.mode == "gethostclassoption":
