@@ -549,7 +549,7 @@ class DiscoAWS(object):
         stage = stage if stage else self.vpc.ami_stage()
         bake = DiscoBake(self._config, self.connection)
         for pipeline in pipelines:
-            pipeline["ami_obj"] = bake.find_ami(stage, pipeline.hostclass, pipeline.ami)
+            pipeline["ami_obj"] = bake.find_ami(stage, pipeline.get_hostclass(), pipeline.get_ami())
             if not pipeline["ami_obj"]:
                 raise AMIError(
                     "Couldn't find AMI {0} for hostclass {1}, aborting spinup.".format(
