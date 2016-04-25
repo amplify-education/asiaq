@@ -288,7 +288,8 @@ class DiscoAWS(object):
 
         return elb
 
-    def provision(self, pipeline, ami_obj, owner=None, monitoring_enabled=True, no_destroy=False, testing=False):
+    def provision(self, pipeline, ami_obj, owner=None, monitoring_enabled=True, no_destroy=False,
+                  testing=False):
         # TODO move key, instance_type, monitoring enabled, extra_space, extra_disk into config file.
         # Pylint thinks this function has too many arguments and too many local variables
         # pylint: disable=R0913, R0914
@@ -333,21 +334,25 @@ class DiscoAWS(object):
             block_device_mappings=block_device_mappings,
             instance_type=instance_type,
             instance_monitoring=monitoring_enabled,
-            instance_profile_name=self.hostclass_option_default(pipeline.get_hostclass(), "instance_profile_name"),
+            instance_profile_name=self.hostclass_option_default(pipeline.get_hostclass(),
+                                                                "instance_profile_name"),
             ebs_optimized=self.disco_storage.is_ebs_optimized(instance_type),
             user_data="\n".join(['{0}="{1}"'.format(key, value) for key, value in user_data.iteritems()]),
-            associate_public_ip_address=is_truthy(self.hostclass_option(pipeline.get_hostclass(), "public_ip")))
+            associate_public_ip_address=is_truthy(self.hostclass_option(pipeline.get_hostclass(),
+                                                                        "public_ip")))
 
         self.create_floating_interfaces(meta_network, pipeline.get_hostclass())
 
         elb = self.update_elb(pipeline.get_hostclass(), update_autoscaling=False)
-        chaos = pipeline.get_chaos(default_val=
-                                   is_truthy(self.hostclass_option_default(pipeline.get_hostclass(), "chaos", "True")))
+
+        default_chaos = is_truthy(self.hostclass_option_default(pipeline.get_hostclass(), "chaos", "True"))
+        chaos = pipeline.get_chaos(default_val=default_chaos)
 
         group = self.autoscale.get_group(
             hostclass=pipeline.get_hostclass(),
             launch_config=launch_config.name,
-            vpc_zone_id=",".join([subnet.id for subnet in self.get_subnets(meta_network, pipeline.get_hostclass())]),
+            vpc_zone_id=",".join([subnet.id for subnet in self.get_subnets(meta_network,
+                                                                           pipeline.get_hostclass())]),
             min_size=pipeline.get_min_size(),
             max_size=pipeline.get_max_size(),
             desired_size=pipeline.get_desired_size(),
