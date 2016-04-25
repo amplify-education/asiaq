@@ -136,7 +136,8 @@ class Pipeline(dict):
         return is_truthy(self.get("deployable", "false"))
 
     def get_chaos(self):
-        return is_truthy(self.get("chaos", "false"))
+        chaos = self.get("chaos")
+        return is_truthy(chaos) if chaos else None
 
     def get_termination_policies(self):
         return self.get("termination_policies").split() if self.has_key("termination_policies") else None
