@@ -306,7 +306,7 @@ class DiscoAWS(object):
         :param testing: bring up host in testing mode (for CI)
         """
         # It's possible that the ami isn't available yet, so wait here
-        wait_for_state(pipeline.get_ami(), u'available', 600)
+        wait_for_state(ami_obj, u'available', 600)
         # TODO is it necessary to wait here???
 
         meta_network = self.get_meta_network(pipeline.get_hostclass())
