@@ -15,6 +15,7 @@ from test.helpers.patch_disco_aws import get_mock_config
 # Don't limit number of tests
 # pylint: disable=R0904
 
+# skim create one with a recurrence map for size
 MOCK_PIPELINE_DEFINITION = [
     {
         'hostclass': 'mhcintegrated',
@@ -105,7 +106,7 @@ class DiscoDeployTests(TestCase):
         self._disco_bake.get_ami_creation_time = DiscoBake.extract_ami_creation_time_from_ami_name
         self._ci_deploy = DiscoDeploy(
             self._disco_aws, self._test_aws, self._disco_bake,
-            pipeline_definition=MOCK_PIPELINE_DEFINITION,
+            pipelines=MOCK_PIPELINE_DEFINITION,
             ami=None, hostclass=None, allow_any_hostclass=False,
             config=get_mock_config(MOCK_CONFIG_DEFINITON))
         self._ci_deploy._disco_aws.terminate = MagicMock()

@@ -3,8 +3,10 @@ Top level disco_aws_automation module.  Orchestrates deployment to AWS.
 """
 from ConfigParser import NoOptionError
 from collections import defaultdict
+from itertools import groupby
 import getpass
 import logging
+from operator import itemgetter
 import random
 import time
 from datetime import datetime
@@ -159,23 +161,6 @@ class DiscoAWS(object):
         return data
 
     @staticmethod
-    def _size_as_recurrence_map(size, sentinel=''):
-        if not size:
-            return {sentinel: None}
-        else:
-            return {sentinel: int(size)} if str(size).isdigit() else {
-                part.split('@')[1]: int(part.split('@')[0])
-                for part in str(size).split(':')}
-
-    @staticmethod
-    def _size_as_minimum_int_or_none(size):
-        return min(DiscoAWS._size_as_recurrence_map(size).values())
-
-    @staticmethod
-    def _size_as_maximum_int_or_none(size):
-        return max(DiscoAWS._size_as_recurrence_map(size).values())
-
-    @staticmethod
     def _nonify(value):
         return None if (isinstance(value, basestring) and value.lower() == "none") or not value else value
 
@@ -235,20 +220,20 @@ class DiscoAWS(object):
             for subnet_ip in subnet_ips.split(' '):
                 meta_network.get_interface(subnet_ip)
 
-    def create_scaling_schedule(self, hostclass, min_size, desired_size, max_size):
+    def create_scaling_schedule(self, pipeline):
         """Create autoscaling schedule"""
-        self.autoscale.delete_all_recurring_group_actions(hostclass)
+        self.autoscale.delete_all_recurring_group_actions(pipeline.get_hostclass())
         maps = [
-            DiscoAWS._size_as_recurrence_map(min_size, sentinel=None),
-            DiscoAWS._size_as_recurrence_map(desired_size, sentinel=None),
-            DiscoAWS._size_as_recurrence_map(max_size, sentinel=None),
+            pipeline.get_min_size_as_recurrence_map(),
+            pipeline.get_desired_size_as_recurrence_map(),
+            pipeline.get_max_size_as_recurrence_map(),
         ]
         times = set([item for sublist in [a_map.keys() for a_map in maps] for item in sublist])
         combined_map = {time: [maps[0].get(time), maps[1].get(time), maps[2].get(time)]
                         for time in times if time is not None}
         for recurrence, sizes in combined_map.items():
             self.autoscale.create_recurring_group_action(
-                hostclass, str(recurrence),
+                pipeline.get_hostclass(), str(recurrence),
                 min_size=sizes[0], desired_capacity=sizes[1], max_size=sizes[2])
 
     def _default_protocol_for_port(self, port):
@@ -296,96 +281,89 @@ class DiscoAWS(object):
 
         return elb
 
-    def provision(self, ami, hostclass=None,
-                  owner=None, instance_type=None, monitoring_enabled=True,
-                  extra_space=None, extra_disk=None, iops=None,
-                  no_destroy=False,
-                  min_size=None, desired_size=None, max_size=None,
-                  testing=False, termination_policies=None,
-                  chaos=None):
+    def provision(self, pipeline, ami_obj, owner=None, monitoring_enabled=True, no_destroy=False,
+                  testing=False):
         # TODO move key, instance_type, monitoring enabled, extra_space, extra_disk into config file.
         # Pylint thinks this function has too many arguments and too many local variables
         # pylint: disable=R0913, R0914
         """
         Instantiate AMIs
 
-        If one of min_size, max_size or desired_size is specified the host is created with
+        If one of min_size, max_size or desired_size is specified in the pipeline, the host is created with
         an autoscaling group.
 
-        Keyword arguments:
-        ami -- the image to start instances of
-        owner -- used to tag the instance so we know who started an instance
-        instance_type -- the Amazon instance type, m3.large, t2.small, etc.
-        monitoring_enabled -- tells Amazon that we want detailed cloudwatch monitoring
-        extra_space -- the number of extra GB to allocate on the root disk
-        extra_disk -- the number of GB to allocate in an additional disk
-        iops is -- the number of provision IOPS to request for the additional disk
-        no_destroy -- when set this command will not destroy a host that fails to boot
-        min_size -- the minimum size of the autoscaling group
-        max_size -- the maximum size of the autoscaling group
-        desired_size -- the currently desired size of for the autoscaling group
-        testing -- bring up host in testing mode (for CI)
-        chaos -- when true we want these instances to be terminatable by the chaos process
+        :param pipeline: Pipeline object
+        :param ami_obj: the image to start instances of
+        :param owner: used to tag the instance so we know who started an instance
+        :param monitoring_enabled: tells Amazon that we want detailed cloudwatch monitoring
+        :param no_destroy: when set this command will not destroy a host that fails to boo
+        :param testing: bring up host in testing mode (for CI)
         """
         # It's possible that the ami isn't available yet, so wait here
-        wait_for_state(ami, u'available', 600)
+        wait_for_state(ami_obj, u'available', 600)
         # TODO is it necessary to wait here???
 
-        meta_network = self.get_meta_network(hostclass)
-        instance_type = instance_type if instance_type else self.get_instance_type(hostclass)
+        meta_network = self.get_meta_network(pipeline.get_hostclass())
+        instance_type = pipeline.get_instance_type() or self.get_instance_type(pipeline.get_hostclass())
 
         # Use a human friendly name and append a random tail to avoid name collisions.
         lc_name = '{0}_{1}_{2}'.format(
-            self.environment_name, hostclass, str(random.randrange(0, 9999999)))
+            self.environment_name, pipeline.get_hostclass(), str(random.randrange(0, 9999999)))
 
-        user_data = self.create_userdata(hostclass, owner, testing)
+        user_data = self.create_userdata(pipeline.get_hostclass(), owner, testing)
 
         block_device_mappings = self.get_block_device_mappings(
-            hostclass, ami, extra_space, extra_disk, iops, instance_type
+            pipeline.get_hostclass(), ami_obj, pipeline.get_extra_space(), pipeline.get_extra_disk(),
+            pipeline.get_iops(), instance_type
         )
 
-        self.log_metrics.update(hostclass)
+        self.log_metrics.update(pipeline.get_hostclass())
 
         launch_config = self.autoscale.get_config(
             name=lc_name,
-            image_id=ami.id,
-            key_name=DiscoAWS._nonify(self.hostclass_option(hostclass, "ssh_key_name")),
+            image_id=ami_obj.id,
+            key_name=DiscoAWS._nonify(self.hostclass_option(pipeline.get_hostclass(), "ssh_key_name")),
             security_groups=[meta_network.security_group.id],
             block_device_mappings=block_device_mappings,
             instance_type=instance_type,
             instance_monitoring=monitoring_enabled,
-            instance_profile_name=self.hostclass_option_default(hostclass, "instance_profile_name"),
+            instance_profile_name=self.hostclass_option_default(pipeline.get_hostclass(),
+                                                                "instance_profile_name"),
             ebs_optimized=self.disco_storage.is_ebs_optimized(instance_type),
             user_data="\n".join(['{0}="{1}"'.format(key, value) for key, value in user_data.iteritems()]),
-            associate_public_ip_address=is_truthy(self.hostclass_option(hostclass, "public_ip")))
+            associate_public_ip_address=is_truthy(self.hostclass_option(pipeline.get_hostclass(),
+                                                                        "public_ip")))
 
-        self.create_floating_interfaces(meta_network, hostclass)
+        self.create_floating_interfaces(meta_network, pipeline.get_hostclass())
 
-        elb = self.update_elb(hostclass, update_autoscaling=False)
+        elb = self.update_elb(pipeline.get_hostclass(), update_autoscaling=False)
 
-        chaos = is_truthy(chaos or self.hostclass_option_default(hostclass, "chaos", "True"))
+        default_chaos = is_truthy(self.hostclass_option_default(pipeline.get_hostclass(), "chaos", "True"))
+        chaos = pipeline.get_chaos(default_val=default_chaos)
 
         group = self.autoscale.get_group(
-            hostclass=hostclass, launch_config=launch_config.name,
-            vpc_zone_id=",".join([subnet.id for subnet in self.get_subnets(meta_network, hostclass)]),
-            min_size=DiscoAWS._size_as_minimum_int_or_none(min_size),
-            max_size=DiscoAWS._size_as_maximum_int_or_none(max_size),
-            desired_size=DiscoAWS._size_as_maximum_int_or_none(desired_size),
-            termination_policies=termination_policies,
-            tags={"hostclass": hostclass,
+            hostclass=pipeline.get_hostclass(),
+            launch_config=launch_config.name,
+            vpc_zone_id=",".join([subnet.id for subnet in self.get_subnets(meta_network,
+                                                                           pipeline.get_hostclass())]),
+            min_size=pipeline.get_min_size(),
+            max_size=pipeline.get_max_size(),
+            desired_size=pipeline.get_desired_size(),
+            termination_policies=pipeline.get_termination_policies(),
+            tags={"hostclass": pipeline.get_hostclass(),
                   "owner": user_data["owner"],
                   "environment": self.environment_name,
                   "chaos": chaos},
             load_balancers=[elb['LoadBalancerName']] if elb else []
         )
 
-        self.create_scaling_schedule(hostclass, min_size, desired_size, max_size)
+        self.create_scaling_schedule(pipeline)
 
         logging.info("Spun up %s instances of %s from %s",
-                     DiscoAWS._size_as_maximum_int_or_none(desired_size), hostclass, ami.id)
+                     pipeline.get_desired_size(), pipeline.get_hostclass(), ami_obj.id)
 
         return {
-            "hostclass": hostclass,
+            "hostclass": pipeline.get_hostclass(),
             "no_destroy": no_destroy,
             "launch_config": lc_name,
             "group_name": group.name,
@@ -551,30 +529,14 @@ class DiscoAWS(object):
             hostclass_alarms = disco_alarm_config.get_alarms(hostclass)
             disco_alarm.create_alarms(hostclass_alarms)
 
-    def spinup(self, hostclass_dicts, stage=None, no_smoke=False, testing=False):
+    def spinup(self, pipelines, stage=None, no_smoke=False, testing=False):
         # Pylint thinks this function has too many local variables
         # pylint: disable=R0914,R0912
         """
         Provisions a complete pipeline.
         Hosts are spun up in sequential groups, where each group spins up in parallel.
 
-        The pipeline should be defined in this format:
-        hostclass_dicts = [
-            { "sequence": 1,
-              "hostclass": "mhcdiscosomething",
-              "desired_size": 1,
-              "instance_type": "m1.large",
-              "extra_space": None,
-              "extra_disk": None,
-              "iops": None,
-              "smoke_test": "true",
-              "ami": None,
-              "min_size": None,
-              "max_size": None,
-              "termination_policies": None,
-              "chaos": "yes"
-              },
-            ...]
+        :param pipelines: a list of Pipeline objects
         """
 
         self.autoscale.clean_configs()
@@ -582,52 +544,39 @@ class DiscoAWS(object):
         # If AMI specified lookup hostclass from AMI else lookup AMI from hostclass
         stage = stage if stage else self.vpc.ami_stage()
         bake = DiscoBake(self._config, self.connection)
-        for entry in hostclass_dicts:
-            entry["ami_obj"] = bake.find_ami(stage, entry.get("hostclass"), entry.get("ami"))
-            if not entry["ami_obj"]:
+        for pipeline in pipelines:
+            pipeline["ami_obj"] = bake.find_ami(stage, pipeline.get_hostclass(), pipeline.get_ami())
+            if not pipeline["ami_obj"]:
                 raise AMIError(
                     "Couldn't find AMI {0} for hostclass {1}, aborting spinup.".format(
-                        entry.get("ami"), entry.get("hostclass")))
-            entry["hostclass"] = DiscoBake.ami_hostclass(entry["ami_obj"])
+                        pipeline.get_ami(), pipeline.get_hostclass()))
+            pipeline["hostclass"] = DiscoBake.ami_hostclass(pipeline["ami_obj"])
 
         # create cloudwatch metrics and alarms
-        self.spinup_alarms([
-            hdict["hostclass"]
-            for hdict in hostclass_dicts
-        ])
+        self.spinup_alarms([pipeline.get_hostclass() for pipeline in pipelines])
 
         # determine which subset of hostclasses will need smoke testing
         flammable = set([]) if no_smoke else set(
-            [
-                hdict["hostclass"]
-                for hdict in hostclass_dicts
-                if is_truthy(hdict.get("smoke_test", ""))
-            ]
+            [pipeline.get_hostclass() for pipeline in pipelines if pipeline.get_smoke_test()]
         )
 
-        # group by sequence number and run groups sequentially
-        groups = set([int(hdict["sequence"]) for hdict in hostclass_dicts])
-        for group in sorted(list(groups)):
-            hostclass_iter = (
-                (hdict["hostclass"], hdict.get("termination_policies"), hdict)
-                for hdict in hostclass_dicts
-                if int(hdict["sequence"]) == group
-            )
+        # sort pipelines by sequence
+        pipelines = sorted(pipelines, key=itemgetter("sequence"))
+        # group pipelines by sequence
+        sequence_pipeline_groups = groupby(pipelines, key=itemgetter("sequence"))
 
+        # run pipelines sequentially by sequence group
+        for sequence_pipeline_group in sequence_pipeline_groups:
+            # first elem is sequence, second elem is group of pipeline for that sequence
+            pipeline_group = sequence_pipeline_group[1]
             # spinup all hostclasses within the same group in parallel
             metadata = [
                 self.provision(
-                    ami=hdict["ami_obj"],
-                    hostclass=hostclass,
-                    instance_type=hdict.get("instance_type") or self.get_instance_type(hdict["hostclass"]),
-                    extra_space=int(hdict["extra_space"]) if hdict.get("extra_space") else None,
-                    extra_disk=int(hdict["extra_disk"]) if hdict.get("extra_disk") else None,
-                    iops=int(hdict["iops"]) if hdict.get("iops") else None,
-                    min_size=hdict.get("min_size"), max_size=hdict.get("max_size"),
-                    desired_size=hdict.get("desired_size"), testing=testing,
-                    termination_policies=termination_policies.split() if termination_policies else None,
-                    chaos=hdict.get("chaos"))
-                for (hostclass, termination_policies, hdict) in hostclass_iter]
+                    pipeline,
+                    ami_obj=pipeline["ami_obj"],
+                    testing=testing
+                )
+                for pipeline in pipeline_group]
 
             self.smoketest(self.wait_for_autoscaling_instances(
                 [_hc for _hc in metadata if _hc["hostclass"] in flammable]))

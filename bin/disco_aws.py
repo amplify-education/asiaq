@@ -5,7 +5,6 @@ Command line tool for working with EC2 instances.
 from __future__ import print_function
 import sys
 import argparse
-import csv
 from datetime import datetime
 from ConfigParser import NoOptionError
 
@@ -16,6 +15,7 @@ from disco_aws_automation.resource_helper import TimeoutError
 from disco_aws_automation.disco_logging import configure_logging
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.exceptions import SmokeTestError
+from disco_aws_automation.pipeline import Pipeline, pipelines_from_file
 
 
 # R0912 Allow more than 12 branches so we can parse a lot of commands..
@@ -235,21 +235,19 @@ def run():
 
     aws = DiscoAWS(config, environment_name=environment_name)
     if args.mode == "provision":
-        hostclass_dicts = [{
-            "sequence": 1,
-            "hostclass": args.hostclass,
-            "instance_type": args.instance_type,
-            "extra_space": args.extra_space,
-            "extra_disk": args.extra_disk,
-            "iops": args.iops,
-            "smoke_test": "no" if args.no_smoke else "yes",
-            "ami": args.ami,
-            "min_size": args.min_size,
-            "desired_size": args.desired_size,
-            "max_size": args.max_size,
-            "chaos": "no" if args.no_chaos else None
-        }]
-        aws.spinup(hostclass_dicts, testing=args.testing)
+        pipeline = Pipeline({"sequence": 1,
+                             "hostclass": args.hostclass,
+                             "instance_type": args.instance_type,
+                             "extra_space": args.extra_space,
+                             "extra_disk": args.extra_disk,
+                             "iops": args.iops,
+                             "smoke_test": "no" if args.no_smoke else "yes",
+                             "ami": args.ami,
+                             "min_size": args.min_size,
+                             "desired_size": args.desired_size,
+                             "max_size": args.max_size,
+                             "chaos": "no" if args.no_chaos else None})
+        aws.spinup([pipeline], testing=args.testing)
     elif args.mode == "listhosts":
         instances = aws.instances_from_hostclass(args.hostclass) if args.hostclass else aws.instances()
         instances_filtered = [i for i in instances if i.state != u"terminated"]
@@ -334,22 +332,17 @@ def run():
             if args.value:
                 instance.add_tag(args.key, args.value)
     elif args.mode == "spinup":
-        with open(args.pipeline_definition_file, "r") as f:
-            reader = csv.DictReader(f)
-            hostclass_dicts = [line for line in reader]
-        aws.spinup(hostclass_dicts, stage=args.stage, no_smoke=args.no_smoke, testing=args.testing)
+        pipelines = pipelines_from_file(args.pipeline_definition_file)
+        aws.spinup(pipelines, stage=args.stage, no_smoke=args.no_smoke, testing=args.testing)
     elif args.mode == "spindown":
-        with open(args.pipeline_definition_file, "r") as f:
-            reader = csv.DictReader(f)
-            hostclasses = [line["hostclass"] for line in reader]
+        pipelines = pipelines_from_file(args.pipeline_definition_file)
+        hostclasses = [pipeline.get_hostclass() for pipeline in pipelines]
         aws.spindown(hostclasses)
     elif args.mode == "spindownandup":
-        with open(args.pipeline_definition_file, "r") as f:
-            reader = csv.DictReader(f)
-            hostclass_dicts = [line for line in reader]
-            hostclasses = [d["hostclass"] for d in hostclass_dicts]
+        pipelines = pipelines_from_file(args.pipeline_definition_file)
+        hostclasses = [pipeline.get_hostclass() for pipeline in pipelines]
         aws.spindown(hostclasses)
-        aws.spinup(hostclass_dicts)
+        aws.spinup(pipelines)
     elif args.mode == "gethostclassoption":
         try:
             print(aws.hostclass_option(args.hostclass, args.option))
