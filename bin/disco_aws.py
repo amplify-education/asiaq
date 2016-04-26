@@ -5,7 +5,6 @@ Command line tool for working with EC2 instances.
 from __future__ import print_function
 import sys
 import argparse
-import csv
 from datetime import datetime
 from ConfigParser import NoOptionError
 

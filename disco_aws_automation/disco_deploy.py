@@ -10,7 +10,6 @@ from boto.exception import EC2ResponseError
 
 from . import DiscoBake, read_config
 from .exceptions import TimeoutError, MaintenanceModeError, IntegrationTestError, SmokeTestError
-from .disco_aws_util import is_truthy
 from .disco_constants import DEFAULT_CONFIG_SECTION
 from .pipeline import Pipeline
 
@@ -169,7 +168,7 @@ class DiscoDeploy(object):
     def is_deployable(self, hostclass):
         """Returns true for all hostclasses which aren't tagged as non-ZDD hostclasses"""
         pipeline = self._hostclass_to_pipeline_map.get(hostclass)
-        return ((pipeline and pipeline.get_deployable()) or not pipeline)
+        return (pipeline and pipeline.get_deployable()) or not pipeline
 
     def get_integration_test(self, hostclass):
         """Returns the integration test for this hostclass, or None if none exists"""

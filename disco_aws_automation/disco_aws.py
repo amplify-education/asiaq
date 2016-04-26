@@ -573,7 +573,9 @@ class DiscoAWS(object):
         sequence_pipeline_groups = groupby(pipelines, key=itemgetter("sequence"))
 
         # run pipelines sequentially by sequence group
-        for sequence, pipeline_group in sequence_pipeline_groups:
+        for sequence_pipeline_group in sequence_pipeline_groups:
+            # first elem is sequence, second elem is group of pipeline for that sequence
+            pipeline_group = sequence_pipeline_group[1]
             # spinup all hostclasses within the same group in parallel
             metadata = [
                 self.provision(
@@ -581,7 +583,7 @@ class DiscoAWS(object):
                     ami_obj=pipeline["ami_obj"],
                     testing=testing
                 )
-                for (pipeline) in pipeline_group]
+                for pipeline in pipeline_group]
 
             self.smoketest(self.wait_for_autoscaling_instances(
                 [_hc for _hc in metadata if _hc["hostclass"] in flammable]))

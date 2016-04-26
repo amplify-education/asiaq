@@ -40,7 +40,6 @@ Options:
 """
 
 from __future__ import print_function
-import csv
 import sys
 
 from docopt import docopt
@@ -77,7 +76,7 @@ def run():
 
     deploy = DiscoDeploy(
         aws, test_aws, DiscoBake(config, aws.connection),
-        pipeline_definition=pipelines,
+        pipelines=pipelines,
         ami=args.get("--ami"), hostclass=args.get("--hostclass"),
         allow_any_hostclass=args["--allow-any-hostclass"])
 

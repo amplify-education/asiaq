@@ -137,7 +137,7 @@ class DiscoAWSTests(TestCase):
                                              "desired_size": "1",
                                              "max_size": "1"})
                         metadata = aws.provision(pipeline,
-                                                 ami=mock_ami,
+                                                 ami_obj=mock_ami,
                                                  owner="unittestuser")
 
         self.assertEqual(metadata["hostclass"], "mhcunittest")
@@ -174,7 +174,7 @@ class DiscoAWSTests(TestCase):
                                              "max_size": "1",
                                              "chaos": "False"})
                         metadata = aws.provision(pipeline,
-                                                 ami=mock_ami,
+                                                 ami_obj=mock_ami,
                                                  owner="unittestuser")
 
         self.assertEqual(metadata["hostclass"], "mhcunittest")
@@ -212,7 +212,7 @@ class DiscoAWSTests(TestCase):
                                              "desired_size": "1",
                                              "max_size": "1"})
                         metadata = aws.provision(pipeline,
-                                                 ami=mock_ami,
+                                                 ami_obj=mock_ami,
                                                  owner="unittestuser")
 
         self.assertEqual(metadata["hostclass"], "mhcunittest")
@@ -247,7 +247,7 @@ class DiscoAWSTests(TestCase):
                                              "desired_size": "2@1 0 * * *:3@6 0 * * *",
                                              "max_size": "6@1 0 * * *:9@6 0 * * *"})
                         aws.provision(pipeline,
-                                      ami=self._get_image_mock(aws),
+                                      ami_obj=self._get_image_mock(aws),
                                       owner="unittestuser")
 
         _ag = aws.autoscale.get_groups()[0]
@@ -274,7 +274,7 @@ class DiscoAWSTests(TestCase):
                                              "desired_size": "2@1 0 * * *:3@6 0 * * *",
                                              "max_size": ""})
                         aws.provision(pipeline,
-                                      ami=self._get_image_mock(aws),
+                                      ami_obj=self._get_image_mock(aws),
                                       owner="unittestuser")
 
         _ag = aws.autoscale.get_groups()[0]
@@ -302,7 +302,7 @@ class DiscoAWSTests(TestCase):
                                              "desired_size": "",
                                              "max_size": ""})
                         aws.provision(pipeline,
-                                      ami=self._get_image_mock(aws),
+                                      ami_obj=self._get_image_mock(aws),
                                       owner="unittestuser")
 
         _ag0 = aws.autoscale.get_groups()[0]
@@ -321,7 +321,7 @@ class DiscoAWSTests(TestCase):
                                              "desired_size": "6",
                                              "max_size": "9"})
                         aws.provision(pipeline,
-                                      ami=self._get_image_mock(aws),
+                                      ami_obj=self._get_image_mock(aws),
                                       owner="unittestuser")
 
         _ag1 = aws.autoscale.get_groups()[0]
@@ -340,7 +340,7 @@ class DiscoAWSTests(TestCase):
                                              "desired_size": "",
                                              "max_size": ""})
                         aws.provision(pipeline,
-                                      ami=self._get_image_mock(aws),
+                                      ami_obj=self._get_image_mock(aws),
                                       owner="unittestuser")
 
         _ag2 = aws.autoscale.get_groups()[0]
