@@ -286,7 +286,8 @@ class DiscoElastiCache(object):
                                       CacheSubnetGroupName=self._get_subnet_group_name(meta_network_name))
             groups = response.get('CacheSubnetGroups', [])
             return groups[0] if groups else None
-        except botocore.exceptions.ClientError:
+        except botocore.exceptions.ClientError as err:
+            logging.exception(str(err))
             return None
 
     def _get_redis_replication_group_id(self, cluster_name):
