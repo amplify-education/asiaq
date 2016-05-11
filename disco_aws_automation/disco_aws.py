@@ -352,6 +352,7 @@ class DiscoAWS(object):
         elb = self.update_elb(hostclass, update_autoscaling=False)
 
         chaos = is_truthy(chaos or self.hostclass_option_default(hostclass, "chaos", "True"))
+        productline = self.hostclass_option_default(hostclass, "product_line", None)
 
         group = self.autoscale.get_group(
             hostclass=hostclass, launch_config=launch_config.name,
@@ -363,7 +364,8 @@ class DiscoAWS(object):
             tags={"hostclass": hostclass,
                   "owner": user_data["owner"],
                   "environment": self.environment_name,
-                  "chaos": chaos},
+                  "chaos": chaos,
+                  "productline": productline},
             load_balancers=[elb['LoadBalancerName']] if elb else []
         )
 
