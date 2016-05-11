@@ -55,7 +55,7 @@ class DiscoELB(object):
         """Returns all of the ELBs for the current environment"""
         return [elb for elb in
                 throttled_call(self.elb_client.describe_load_balancers).get('LoadBalancerDescriptions', [])
-                if elb['VPCId'] == self.vpc.vpc.id]
+                if elb['VPCId'] == self.vpc.get_vpc_id()]
 
     def get_cname(self, hostclass, domain_name):
         """Get the expected subdomain for an ELB for a hostclass"""

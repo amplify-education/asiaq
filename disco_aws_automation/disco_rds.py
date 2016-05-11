@@ -293,7 +293,7 @@ class DiscoRDS(object):
         vpc_instances = [
             instance
             for instance in instances
-            if instance["DBSubnetGroup"]["VpcId"] == self.vpc.vpc.id and (
+            if instance["DBSubnetGroup"]["VpcId"] == self.vpc.get_vpc_id() and (
                 not states or instance["DBInstanceStatus"] in states)]
         return vpc_instances
 

@@ -57,6 +57,16 @@ def parse_arguments():
                                  help='The VPC Name of the environment for VPC peering operation')
     parser_peerings.add_argument('--vpc-id', dest='vpc_id', required=False, default=None,
                                  help="The VPC ID of the environment for VPC peering operation")
+
+    parser_update = subparsers.add_parser(
+        'update', help='Update environment settings.')
+    parser_update.set_defaults(mode='update')
+    parser_update_group = parser_update.add_mutually_exclusive_group(required=True)
+    parser_update_group.add_argument('--name', dest='vpc_name', default=None,
+                                     help="The name of the environment that ought to be updated.")
+    parser_update_group.add_argument('--vpc-id', dest='vpc_id', default=None,
+                                     help="The VPC ID of the environment that ought to be updated.")
+
     return parser.parse_args()
 
 
@@ -67,7 +77,7 @@ def create_vpc_command(args):
         sys.exit(1)
     else:
         vpc = DiscoVPC(args.vpc_name, args.vpc_type)
-        logging.info("VPC %s(%s) has been created", args.vpc_name, vpc.vpc.id)
+        logging.info("VPC %s(%s) has been created", args.vpc_name, vpc.get_vpc_id())
 
 
 def destroy_vpc_command(args):
@@ -84,12 +94,26 @@ def destroy_vpc_command(args):
         sys.exit(2)
 
 
+def update_vpc_command(args):
+    """ handle vpc update command actions"""
+    if args.vpc_name:
+        vpc = DiscoVPC.fetch_environment(environment_name=args.vpc_name)
+    else:
+        vpc = DiscoVPC.fetch_environment(vpc_id=args.vpc_id)
+
+    if vpc:
+        vpc.update()
+    else:
+        logging.error("No matching VPC found")
+        sys.exit(2)
+
+
 def list_vpc_command(args):
     """ handle list vpcs command actions """
     for vpc_env in DiscoVPC.list_vpcs():
-        line = u"{0}\t{1:<15}".format(vpc_env.id, vpc_env.tags.get("Name", "-"))
+        line = u"{0}\t{1:<15}".format(vpc_env['id'], vpc_env['tags'].get("Name", "-"))
         if args.env_type:
-            line += u"\t{0}".format(vpc_env.tags.get("type", "-"))
+            line += u"\t{0}".format(vpc_env['tags'].get("type", "-"))
         print(line)
 
 
@@ -107,21 +131,21 @@ def proxy_peerings_command(args):
         vpc_id = None
 
     if args.list_peerings:
-        vpc_map = {vpc.id: vpc for vpc in DiscoVPC.list_vpcs()}
+        vpc_map = {vpc['id']: vpc for vpc in DiscoVPC.list_vpcs()}
         peerings = sorted(
             DiscoVPC.list_peerings(vpc_id, include_failed=True),
-            key=lambda p: vpc_map.get(p.accepter_vpc_info.vpc_id).tags.get("Name"))
+            key=lambda p: vpc_map.get(p['AccepterVpcInfo']['VpcId'])['tags'].get("Name"))
 
         for peering in peerings:
-            vpc1 = vpc_map.get(peering.accepter_vpc_info.vpc_id)
-            vpc2 = vpc_map.get(peering.requester_vpc_info.vpc_id)
+            vpc1 = vpc_map.get(peering['AccepterVpcInfo']['VpcId'])
+            vpc2 = vpc_map.get(peering['RequesterVpcInfo']['VpcId'])
 
             line = u"{0:<14} {1:<8} {2:<20} {3:<21}".format(
-                peering.id, peering.status_code, "{}<->{}".format(
-                    vpc1.tags.get("Name"), vpc2.tags.get("Name")),
+                peering['VpcPeeringConnectionId'], peering['Status']['Code'], "{}<->{}".format(
+                    vpc1['tags'].get("Name"), vpc2['tags'].get("Name")),
                 "{}<->{}".format(
-                    peering.accepter_vpc_info.cidr_block,
-                    peering.requester_vpc_info.cidr_block))
+                    peering['AccepterVpcInfo']['CidrBlock'],
+                    peering['RequesterVpcInfo']['CidrBlock']))
             print(line)
     elif args.delete_peerings:
         DiscoVPC.delete_peerings(vpc_id)
@@ -143,6 +167,8 @@ def run():
         list_vpc_command(args)
     elif args.mode == 'peerings':
         proxy_peerings_command(args)
+    elif args.mode == "update":
+        update_vpc_command(args)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from boto.ec2.networkinterface import (
     NetworkInterfaceCollection
 )
 from boto.exception import EC2ResponseError
+from boto.vpc import VPCConnection
 
 from .resource_helper import keep_trying
 from .disco_constants import NETWORKS
@@ -38,6 +39,7 @@ class DiscoMetaNetwork(object):
         self._route_table = None  # lazily initialized
         self._security_group = None  # lazily initialized
         self._subnets = None  # lazily initialized
+        self._connection = VPCConnection()
 
     def _resource_name(self, suffix=None):
         suffix = "_{0}".format(suffix) if suffix else ""
@@ -52,9 +54,13 @@ class DiscoMetaNetwork(object):
         self._security_group = self.security_group
         self._subnets = self.subnets
 
+    def vpc_filter(self):
+        vf = self.vpc.vpc_filter()
+        return {vf.get('Name'): vf.get('Values')[0]}
+
     @property
     def _resource_filter(self):
-        resource_filter = self.vpc.vpc_filter()
+        resource_filter = self.vpc_filter()
         resource_filter["tag:meta_network"] = self.name
         return resource_filter
 
@@ -73,14 +79,14 @@ class DiscoMetaNetwork(object):
 
     def _find_route_table(self):
         try:
-            return self.vpc.vpc.connection.get_all_route_tables(
+            return self._connection.get_all_route_tables(
                 filters=self._resource_filter
             )[0]
         except IndexError:
             return None
 
     def _create_route_table(self):
-        route_table = self.vpc.vpc.connection.create_route_table(self.vpc.vpc.id)
+        route_table = self._connection.create_route_table(self.vpc.get_vpc_id())
         self._tag_resource(route_table)
         logging.debug("%s route table: %s", self.name, self._route_table)
         return route_table
@@ -96,7 +102,7 @@ class DiscoMetaNetwork(object):
 
     def _find_security_group(self):
         try:
-            return self.vpc.vpc.connection.get_all_security_groups(
+            return self._connection.get_all_security_groups(
                 filters=self._resource_filter
             )[0]
         except IndexError:
@@ -108,10 +114,10 @@ class DiscoMetaNetwork(object):
         return NETWORKS[self.name]
 
     def _create_security_group(self):
-        security_group = self.vpc.vpc.connection.create_security_group(
+        security_group = self._connection.create_security_group(
             self._resource_name(),
             self.sg_description,
-            self.vpc.vpc.id
+            self.vpc.get_vpc_id()
         )
         self._tag_resource(security_group)
         logging.debug("%s security_group: %s", self.name, security_group)
@@ -127,13 +133,13 @@ class DiscoMetaNetwork(object):
         return self._subnets
 
     def _find_subnets(self):
-        return self.vpc.vpc.connection.get_all_subnets(
+        return self._connection.get_all_subnets(
             filters=self._resource_filter
         )
 
     def _create_subnets(self):
         logging.debug("creating subnets")
-        zones = self.vpc.vpc.connection.get_all_zones()
+        zones = self._connection.get_all_zones()
         logging.debug("zones: %s", zones)
         # We'll need to split each subnet into smaller ones, one per zone
         # offset is how much we need to add to cidr divisor to create at least
@@ -149,8 +155,8 @@ class DiscoMetaNetwork(object):
         subnets = []
         for zone, cidr in zip(zones, zone_cidrs):
             logging.debug("%s %s", zone, cidr)
-            subnet = self.vpc.vpc.connection.create_subnet(self.vpc.vpc.id, cidr, zone.name)
-            self.vpc.vpc.connection.associate_route_table(self.route_table.id, subnet.id)
+            subnet = self._connection.create_subnet(self.vpc.get_vpc_id(), cidr, zone.name)
+            self._connection.associate_route_table(self.route_table.id, subnet.id)
             self._tag_resource(subnet, zone.name)
             subnets.append(subnet)
             logging.debug("%s subnet: %s", self.name, subnet)
@@ -184,16 +190,16 @@ class DiscoMetaNetwork(object):
         Allocate a 'floating' network inteface with static ip --
         if it does not already exist.
         """
-        instance_filter = self.vpc.vpc_filter()
+        instance_filter = self.vpc_filter()
         instance_filter["private-ip-address"] = private_ip
-        interfaces = self.vpc.vpc.connection.get_all_network_interfaces(
+        interfaces = self._connection.get_all_network_interfaces(
             filters=instance_filter
         )
         if interfaces:
             return interfaces[0]
 
         subnet = self.subnet_by_ip(private_ip)
-        return self.vpc.vpc.connection.create_network_interface(
+        return self._connection.create_network_interface(
             subnet_id=subnet.id,
             private_ip_address=private_ip,
             description="floating interface",
@@ -203,7 +209,7 @@ class DiscoMetaNetwork(object):
     def add_route(self, destination_cidr_block, *args, **kwargs):
         """ Try adding a route, if fails delete matching CIDR route and try again """
         try:
-            return self.vpc.vpc.connection.create_route(
+            return self._connection.create_route(
                 self.route_table.id,
                 destination_cidr_block,
                 *args,
@@ -211,8 +217,8 @@ class DiscoMetaNetwork(object):
             )
         except EC2ResponseError:
             logging.exception("Failed to create route due to conflict. Deleting old route and re-trying.")
-            self.vpc.vpc.connection.delete_route(self.route_table.id, destination_cidr_block)
-            new_route = self.vpc.vpc.connection.create_route(
+            self._connection.delete_route(self.route_table.id, destination_cidr_block)
+            new_route = self._connection.create_route(
                 self.route_table_id,
                 destination_cidr_block,
                 *args,
@@ -235,4 +241,4 @@ class DiscoMetaNetwork(object):
         sg_args["from_port"] = ports[0]
         sg_args["to_port"] = ports[1]
         logging.debug("Adding sg_rule: %s", sg_args)
-        self.vpc.vpc.connection.authorize_security_group(**sg_args)
+        self._connection.authorize_security_group(**sg_args)

@@ -476,7 +476,8 @@ class DiscoAWS(object):
         if filters:
             combined_filters.update(filters)
         if self.vpc:
-            combined_filters.update(self.vpc.vpc_filter())
+            vpc_filter = {tag.get('Name'): tag.get('Values')[0] for tag in ([self.vpc.vpc_filter()] or {})}
+            combined_filters.update(vpc_filter)
         reservations = keep_trying(
             60, self.connection.get_all_instances,
             filters=combined_filters, instance_ids=instance_ids
