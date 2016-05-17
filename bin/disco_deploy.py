@@ -83,7 +83,9 @@ def run():
         allow_any_hostclass=args["--allow-any-hostclass"])
 
     if args["test"]:
-        deploy.test(dry_run=args["--dry-run"])
+        test_status = deploy.test(dry_run=args["--dry-run"])
+        if test_status == 'failed':
+            sys.exit(1)
     elif args["update"]:
         deploy.update(dry_run=args["--dry-run"])
     elif args["list"]:

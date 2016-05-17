@@ -340,6 +340,7 @@ class DiscoDeploy(object):
         if dry_run:
             return
 
+        # Run Integration Tests on old AMI as sanity test
         if desired_size and run_tests and not self.run_integration_tests(ami):
             raise Exception("Failed pre-test -- not testing AMI {}".format(ami.id))
 
@@ -478,10 +479,18 @@ class DiscoDeploy(object):
             self.handle_tested_ami(old_hostclass_dict, ami, desired_capacity, dry_run=dry_run)
 
     def test(self, dry_run=False):
-        '''Tests a single untested AMI and marks it as tested or failed'''
+        '''
+        Tests a single untested AMI and marks it as tested or failed
+
+        Return the status of the tested AMI (eg, tested, failed) or None
+        '''
         amis = self.get_test_amis()
+        test_status = None
         if len(amis):
-            self.test_ami(random.choice(amis), dry_run)
+            testable_ami = random.choice(amis)
+            self.test_ami(testable_ami, dry_run)
+            test_status = testable_ami.tags.get("stage")
+        return test_status
 
     def update(self, dry_run=False):
         '''Updates a single autoscaling group with a newer AMI'''
