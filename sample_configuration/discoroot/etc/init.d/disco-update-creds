@@ -154,6 +154,9 @@ get_config_files() {
 
     files="$files\n$(find /opt/splunkforwarder/etc 2> /dev/null)"
 
+    # init.d scripts
+    files="$files\n$(find /etc/init.d 2> /dev/null)"
+
     echo -e "$files"
 }
 
