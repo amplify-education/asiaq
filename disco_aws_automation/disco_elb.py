@@ -293,8 +293,8 @@ class DiscoELB(object):
         # load balancers can only have letters, numbers or dashes in their names so strip everything else
         elb_name = re.sub(r'[^a-zA-Z0-9-]', '', name)
 
-        if len(elb_name) > 32:
-            raise CommandError('ELB name ' + elb_name + " is over 32 characters")
+        if len(elb_name) > 255:
+            raise CommandError('ELB name ' + elb_name + " is over 255 characters")
 
         return elb_name
 

@@ -95,6 +95,9 @@ def get_parser():
     parser_listhosts.add_argument('--uptime', dest='uptime', action='store_const',
                                   const=True, default=False,
                                   help='Display instance age in hours')
+    parser_listhosts.add_argument('--securitygroup', dest='securitygroup', action='store_const',
+                                  const=True, default=False,
+                                  help='Display instance security group')
     parser_listhosts.add_argument('--availability-zone', dest='availability_zone',
                                   action='store_const',
                                   const=True, default=False,
@@ -293,6 +296,8 @@ def run():
             if args.productline or args.all:
                 productline = instance.tags.get("productline", u"unknown")
                 line += u" {0:<15}".format(productline if productline != u"unknown" else u"-")
+            if args.securitygroup or args.all:
+                line += u" {0:15}".format(instance.groups[0].name)
             print(line)
 
     elif args.mode == "terminate":
