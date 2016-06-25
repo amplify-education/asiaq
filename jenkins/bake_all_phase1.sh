@@ -2,7 +2,7 @@
 
 source "$(dirname $0)/bake_common.sh"  > /dev/null 2>&1
 
-phase1_images="centos6_phase1 centos7_phase1 ubuntu1404_phase1"
+phase1_images=$(python -c 'from ConfigParser import ConfigParser; c = ConfigParser(); c.read(["disco_aws.ini"]); print " ".join([s for s in c.sections() if c.has_option(s, "phase") and c.get(s,"phase") == "1"])')
 exit_status=0
 RETRY_DELAY=30
 
