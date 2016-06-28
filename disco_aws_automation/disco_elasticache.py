@@ -55,7 +55,18 @@ class DiscoElastiCache(object):
 
         return sorted(groups, key=lambda group: (group['Description']))
 
-    def update(self, cluster_name):
+    def list_snapshots(self, cluster_name=None):
+        """List all snapshots or snapshots of particular cluster"""
+        if not cluster_name:
+            cluster_name = ''
+        snapshot_descriptions = self.conn.describe_snapshots()
+        env_prefix = self.vpc.environment_name + '-'
+        for snapshot_data in snapshot_descriptions.get('Snapshots', []):
+            if not snapshot_data['SnapshotName'].startswith(env_prefix + cluster_name):
+                continue
+            yield snapshot_data
+
+    def update(self, cluster_name, snapshot_name=None):
         """
         Create a new cluster or modify an existing one based on the config file
 
@@ -78,6 +89,7 @@ class DiscoElastiCache(object):
         port = int(self._get_option(cluster_name, 'port'))
         auto_failover = self._has_auto_failover(engine_version, instance_type, num_nodes)
         domain_name = self._get_option(cluster_name, 'domain_name') or self.aws.get_default_domain_name()
+        use_snapshot = bool(self._get_option(cluster_name, 'snapshot'))
         tags = [{
             'Key': 'product_line',
             'Value': self._get_option(cluster_name, 'product_line') or self.aws.get_default_product_line('')
@@ -93,9 +105,14 @@ class DiscoElastiCache(object):
         }]
         cache_cluster = self._get_redis_cluster(cluster_name)
         if not cache_cluster:
-            self._create_redis_cluster(cluster_name, engine_version, num_nodes, instance_type,
-                                       parameter_group, port, meta_network, auto_failover, domain_name, tags,
-                                       maintenance_window)
+            if not snapshot_name and use_snapshot:
+                try:
+                    snapshot_name = self.get_latest_snapshot(cluster_name)['SnapshotName']
+                except TypeError:
+                    logging.warning('Unable to find latest snapshot for cluster "%s"', cluster_name)
+            self._create_redis_cluster(
+                cluster_name, engine_version, num_nodes, instance_type, parameter_group, port, meta_network,
+                auto_failover, domain_name, tags, maintenance_window, snapshot_name)
         else:
             if cache_cluster['Status'] == 'available':
                 self._modify_redis_cluster(cluster_name, engine_version,
@@ -127,7 +144,20 @@ class DiscoElastiCache(object):
             return
 
         logging.info('Deleting cache cluster %s', cluster['Description'])
-        throttled_call(self.conn.delete_replication_group, ReplicationGroupId=cluster['ReplicationGroupId'])
+
+        take_snapshot = bool(self._get_option(cluster_name, 'snapshot'))
+        snapshot_name = None
+        if take_snapshot:
+            from datetime import datetime
+            snapshot_name = cluster['Description'] + "-" + datetime.now().strftime('%Y%m%d-%H%M')
+            logging.info('Taking cluster snapshot "%s"', snapshot_name)
+            throttled_call(
+                self.conn.delete_replication_group,
+                ReplicationGroupId=cluster['ReplicationGroupId'],
+                FinalSnapshotIdentifier=snapshot_name)
+        else:
+            throttled_call(
+                self.conn.delete_replication_group, ReplicationGroupId=cluster['ReplicationGroupId'])
 
         self.route53.delete_records_by_value('CNAME', cluster['NodeGroups'][0]['PrimaryEndpoint']['Address'])
 
@@ -166,6 +196,18 @@ class DiscoElastiCache(object):
             throttled_call(self.conn.delete_cache_subnet_group,
                            CacheSubnetGroupName=group['CacheSubnetGroupName'])
 
+    def get_latest_snapshot(self, cluster_name):
+        """Get the latest snapshot for cluster"""
+        def latest_cluster_snapshot_date(snapshot_data):
+            """Finds the latest node snapshot by data"""
+            from operator import itemgetter
+            return max(snapshot_data['NodeSnapshots'], key=itemgetter('SnapshotCreateTime'))
+
+        try:
+            return max(self.list_snapshots(cluster_name), key=latest_cluster_snapshot_date)
+        except ValueError:
+            return None
+
     def _get_redis_cluster(self, cluster_name):
         """Returns a Redis Replication group by its name"""
         replication_group_id = self._get_redis_replication_group_id(cluster_name)
@@ -179,9 +221,9 @@ class DiscoElastiCache(object):
 
     # too many arguments and local variables for pylint
     # pylint: disable=R0913, R0914
-    def _create_redis_cluster(self, cluster_name, engine_version, num_nodes, instance_type,
-                              parameter_group,
-                              port, meta_network_name, auto_failover, domain_name, tags, maintenance_window):
+    def _create_redis_cluster(self, cluster_name, engine_version, num_nodes, instance_type, parameter_group,
+                              port, meta_network_name, auto_failover, domain_name, tags, maintenance_window,
+                              snapshot_name=None):
         """
         Create a redis cache cluster
 
@@ -206,31 +248,36 @@ class DiscoElastiCache(object):
             tags (List[dict]): list of tags to add to replication group
             maintenance_window(string): specifies the weekly time range (of at least 1 hour) in UTC during
                                         which maintenance on the cache cluster is performed.
+            snapshot_name (str): snapshot name
         """
         replication_group_id = self._get_redis_replication_group_id(cluster_name)
         description = self._get_redis_description(cluster_name)
         meta_network = self.vpc.networks[meta_network_name]
         subnet_group = self._get_subnet_group_name(meta_network_name)
 
-        logging.info('Creating "%s" Redis cache', description)
-        throttled_call(self.conn.create_replication_group,
-                       ReplicationGroupId=replication_group_id,
-                       ReplicationGroupDescription=description,
-                       NumCacheClusters=num_nodes,
-                       CacheNodeType=instance_type,
-                       Engine='redis',
-                       EngineVersion=engine_version,
-                       CacheParameterGroupName=parameter_group,
-                       CacheSubnetGroupName=subnet_group,
-                       SecurityGroupIds=[meta_network.security_group.id],
-                       Port=port,
-                       AutomaticFailoverEnabled=auto_failover,
-                       Tags=tags,
-                       PreferredMaintenanceWindow=maintenance_window)
+        replication_group_properties = {
+            'ReplicationGroupId': replication_group_id,
+            'ReplicationGroupDescription': description,
+            'NumCacheClusters': num_nodes,
+            'CacheNodeType': instance_type,
+            'Engine': 'redis',
+            'EngineVersion': engine_version,
+            'CacheParameterGroupName': parameter_group,
+            'CacheSubnetGroupName': subnet_group,
+            'SecurityGroupIds': [meta_network.security_group.id],
+            'Port': port,
+            'AutomaticFailoverEnabled': auto_failover,
+            'Tags': tags,
+            'PreferredMaintenanceWindow': maintenance_window
+        }
+        if snapshot_name:
+            logging.info('Using snapshot "%s"', snapshot_name)
+            replication_group_properties['SnapshotName'] = snapshot_name
 
-        self.conn.get_waiter('replication_group_available').wait(
-            ReplicationGroupId=replication_group_id
-        )
+        logging.info('Creating "%s" Redis cache', description)
+        throttled_call(self.conn.create_replication_group, **replication_group_properties)
+
+        self.conn.get_waiter('replication_group_available').wait(ReplicationGroupId=replication_group_id)
 
         cluster = self._get_redis_cluster(cluster_name)
 

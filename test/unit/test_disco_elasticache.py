@@ -67,6 +67,17 @@ class DiscoElastiCacheTests(TestCase):
                 'auto_failover': 'true',
                 'maintenance_window': 'sun:10:00-sun:11:00'
             },
+            'unittest:snapshot-cache': {
+                'instance_type': 'cache.m1.small',
+                'engine': 'redis',
+                'engine_version': '2.8.6',
+                'port': '1000',
+                'parameter_group': 'default',
+                'num_nodes': '5',
+                'auto_failover': 'true',
+                'maintenance_window': 'sun:10:00-sun:11:00',
+                'snapshot': 'true'
+            },
             'unittest:old-cache': {
                 'instance_type': 'cache.m1.small',
                 'engine': 'redis',
@@ -162,7 +173,7 @@ class DiscoElastiCacheTests(TestCase):
         self.assertEquals(set(['unittest-old-cache', 'unittest-cache2']), set(ids))
 
     def test_create_redis_cluster(self):
-        """Test modifying a redis cluster"""
+        """Test creating a redis cluster"""
         self.elasticache.update('new-cache')
 
         self.elasticache.conn.create_replication_group.assert_called_once_with(
@@ -183,7 +194,6 @@ class DiscoElastiCacheTests(TestCase):
                   {'Key': 'name', 'Value': 'new-cache'},
                   {'Key': 'environment', 'Value': 'unittest'}]
         )
-
         subdomain = 'new-cache-unittest.example.com'
         self.elasticache.route53.create_record.assert_called_once_with(
             'example.com', subdomain, 'CNAME', 'foo.example.com'
@@ -204,9 +214,11 @@ class DiscoElastiCacheTests(TestCase):
 
     def test_update_all(self):
         """Test updating multiple clusters at once"""
+        self.elasticache.conn.describe_snapshots.side_effect = self._describe_snapshots
+
         self.elasticache.update_all()
 
-        self.elasticache.conn.create_replication_group.assert_called_once_with(
+        self.elasticache.conn.create_replication_group.assert_any_call(
             AutomaticFailoverEnabled=True,
             CacheNodeType='cache.m1.small',
             CacheParameterGroupName='default',
@@ -223,6 +235,26 @@ class DiscoElastiCacheTests(TestCase):
                   {'Key': 'owner', 'Value': MatchAnything()},
                   {'Key': 'name', 'Value': 'new-cache'},
                   {'Key': 'environment', 'Value': 'unittest'}]
+        )
+
+        self.elasticache.conn.create_replication_group.assert_any_call(
+            AutomaticFailoverEnabled=True,
+            CacheNodeType='cache.m1.small',
+            CacheParameterGroupName='default',
+            CacheSubnetGroupName='unittest-intranet',
+            Engine='redis',
+            EngineVersion='2.8.6',
+            NumCacheClusters=5,
+            Port=1000,
+            ReplicationGroupDescription='unittest-snapshot-cache',
+            ReplicationGroupId=self.elasticache._get_redis_replication_group_id('snapshot-cache'),
+            SecurityGroupIds=['fake_security'],
+            PreferredMaintenanceWindow='sun:10:00-sun:11:00',
+            Tags=[{'Key': 'product_line', 'Value': 'example_team'},
+                  {'Key': 'owner', 'Value': MatchAnything()},
+                  {'Key': 'name', 'Value': 'snapshot-cache'},
+                  {'Key': 'environment', 'Value': 'unittest'}],
+            SnapshotName='unittest-snapshot-cache-2'
         )
 
         self.elasticache.conn.modify_replication_group.assert_called_once_with(
@@ -290,3 +322,65 @@ class DiscoElastiCacheTests(TestCase):
 
         self.assertLessEqual(16, len(group_id))
         self.assertTrue(group_id[0].isalpha())
+
+    def test_list_snapshots(self):
+        """Test getting list of snapshots"""
+        self.elasticache.conn.describe_snapshots.side_effect = self._describe_snapshots
+
+        snapshots = self.elasticache.list_snapshots()
+        self.assertEquals(len(list(snapshots)), 3)
+
+        snapshots = self.elasticache.list_snapshots('snapshot-cache')
+        self.assertEquals(len(list(snapshots)), 2)
+
+    def test_get_latest_snapshot(self):
+        """Test finding the latest snapshot"""
+        latest_snapshot = self.elasticache.get_latest_snapshot('snapshot-cache')
+        self.assertIsNone(latest_snapshot)
+
+        self.elasticache.conn.describe_snapshots.side_effect = self._describe_snapshots
+        latest_snapshot = self.elasticache.get_latest_snapshot('snapshot-cache')
+        self.assertEquals(latest_snapshot['SnapshotName'], 'unittest-snapshot-cache-2')
+
+    @staticmethod
+    def _describe_snapshots():
+        from datetime import datetime
+
+        return {
+            'Snapshots': [
+                {
+                    'SnapshotName': 'unittest-snapshot-cache-1',
+                    'CacheClusterId': 'clustera',
+                    'SnapshotStatus': 'available',
+                    'NodeSnapshots': [
+                        {
+                            'CacheNodeId': '001',
+                            'CacheSize': '5 M',
+                            'SnapshotCreateTime': datetime(2016, 1, 1)
+                        }
+                    ]
+                }, {
+                    'SnapshotName': 'unittest-snapshot-cache-2',
+                    'CacheClusterId': 'clustera',
+                    'SnapshotStatus': 'available',
+                    'NodeSnapshots': [
+                        {
+                            'CacheNodeId': '001',
+                            'CacheSize': '5 M',
+                            'SnapshotCreateTime': datetime(2016, 2, 1)
+                        }
+                    ]
+                }, {
+                    'SnapshotName': 'unittest-snapshot-other-cache-1',
+                    'CacheClusterId': 'clusterb',
+                    'SnapshotStatus': 'available',
+                    'NodeSnapshots': [
+                        {
+                            'CacheNodeId': '001',
+                            'CacheSize': '6 M',
+                            'SnapshotCreateTime': datetime(2016, 3, 1)
+                        }
+                    ]
+                }
+            ]
+        }
