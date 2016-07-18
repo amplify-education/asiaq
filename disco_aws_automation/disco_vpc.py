@@ -21,7 +21,7 @@ from . import normalize_path
 from .disco_alarm import DiscoAlarm
 from .disco_alarm_config import DiscoAlarmsConfig
 from .disco_autoscale import DiscoAutoscale
-from .disco_constants import CREDENTIAL_BUCKET_TEMPLATE, NETWORKS
+from .disco_constants import CREDENTIAL_BUCKET_TEMPLATE, NETWORKS, VPC_CONFIG_FILE
 from .disco_elasticache import DiscoElastiCache
 from .disco_elb import DiscoELB
 from .disco_log_metrics import DiscoLogMetrics
@@ -38,9 +38,6 @@ from .exceptions import (
     VPCNameNotFound)
 
 
-CONFIG_FILE = "disco_vpc.ini"
-
-
 # FIXME: pylint thinks the file has too many instance arguments
 # pylint: disable=R0902
 class DiscoVPC(object):
@@ -49,7 +46,7 @@ class DiscoVPC(object):
     """
 
     def __init__(self, environment_name, environment_type, vpc=None, config_file=None, boto3_ec2=None):
-        self.config_file = config_file or CONFIG_FILE
+        self.config_file = config_file or VPC_CONFIG_FILE
 
         self.environment_name = environment_name
         self.environment_type = environment_type

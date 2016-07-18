@@ -14,6 +14,7 @@ from .exceptions import VPCPeeringSyntaxError
 # way that works for unit tests.
 # pylint: disable=W0403
 import disco_vpc
+from .disco_constants import VPC_CONFIG_FILE
 
 LIVE_PEERING_STATES = ["pending-acceptance", "provisioning", "active"]
 
@@ -171,8 +172,8 @@ class DiscoVPCPeerings(object):
 
     @staticmethod
     def _get_peering_lines():
-        logging.debug("Parsing peerings configuration specified in %s", disco_vpc.CONFIG_FILE)
-        config = read_config(disco_vpc.CONFIG_FILE)
+        logging.debug("Parsing peerings configuration specified in %s", VPC_CONFIG_FILE)
+        config = read_config(VPC_CONFIG_FILE)
 
         if 'peerings' not in config.sections():
             logging.info("No VPC peering configuration defined.")

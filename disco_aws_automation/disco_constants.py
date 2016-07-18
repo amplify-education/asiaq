@@ -19,3 +19,5 @@ NETWORKS = {"intranet": "Inter host",
             "dmz": "Client facing",
             "tunnel": "internet http proxy",
             "maintenance": "Admin jump box"}
+
+VPC_CONFIG_FILE = "disco_vpc.ini"

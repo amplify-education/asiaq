@@ -14,8 +14,9 @@ from . import read_config
 from .disco_route53 import DiscoRoute53
 from .resource_helper import throttled_call
 from .disco_aws_util import is_truthy
-from .disco_constants import DEFAULT_CONFIG_SECTION
-from .disco_vpc import CONFIG_FILE as VPC_CONFIG_FILE
+from .disco_constants import DEFAULT_CONFIG_SECTION, VPC_CONFIG_FILE
+from .disco_alarm import DiscoAlarm
+from .disco_alarm_config import DiscoAlarmsConfig
 
 CONFIG_FILE = "disco_elasticsearch.ini"
 
@@ -26,7 +27,7 @@ class DiscoElasticsearch(object):
     """
 
     def __init__(self, environment_name, config_aws=None, config_es=None,
-                 config_vpc=None, route53=None):
+                 config_vpc=None, route53=None, alarms=None):
         self.config_aws = config_aws or read_config()
         self.config_vpc = config_vpc or read_config(VPC_CONFIG_FILE)
         self.config_es = config_es or read_config(CONFIG_FILE)
@@ -42,6 +43,7 @@ class DiscoElasticsearch(object):
         self._account_id = None  # Lazily initialized
         self._region = None  # Lazily initialized
         self._zone = None  # Lazily initialized
+        self._alarms = alarms or None  # Lazily initialized
 
     @property
     def conn(self):
@@ -80,6 +82,14 @@ class DiscoElasticsearch(object):
         if not self._zone:
             self._zone = self.get_aws_option('domain_name')
         return self._zone
+
+    @property
+    def alarms(self):
+        """Disco alarms object"""
+        if not self._alarms:
+            alarm_configs = DiscoAlarmsConfig(self.environment_name, elasticsearch=self)
+            self._alarms = DiscoAlarm(environment=self.environment_name, alarm_configs=alarm_configs)
+        return self._alarms
 
     def get_domain_name(self, elasticsearch_name):
         """
@@ -186,6 +196,13 @@ class DiscoElasticsearch(object):
         except (BotoCoreError, Boto3Error, KeyError):
             return None
 
+    def get_client_id(self, domain_name):
+        """
+        Get the client id of the ElasticSearch domain.
+        """
+        domain_description = self._describe_es_domain(domain_name)
+        return domain_description['DomainStatus']['DomainId'].split('/')[0]
+
     def _access_policy(self, domain_name, allowed_source_ips):
         """
         Construct an access policy for the new Elasticsearch cluster. Needs to be dynamically created because
@@ -272,6 +289,9 @@ class DiscoElasticsearch(object):
             # Add the Route 53 entry
             self._add_route53(domain_name)
 
+            # Update alarms
+            self.alarms.create_alarms(elasticsearch_name)
+
     def delete(self, elasticsearch_name=None, delete_all=False):
         """
         Delete an ElasticSearch domain.
@@ -303,6 +323,11 @@ class DiscoElasticsearch(object):
             logging.info('Deleting ElasticSearch domain %s', domain_name)
             self._remove_route53(domain_name)
             throttled_call(self.conn.delete_elasticsearch_domain, DomainName=domain_name)
+
+            # Destroy alarms
+            self.alarms.delete_hostclass_environment_alarms(
+                self.environment_name, elasticsearch_name
+            )
 
     def _get_elasticsearch_names(self):
         """

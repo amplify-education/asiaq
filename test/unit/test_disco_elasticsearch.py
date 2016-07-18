@@ -61,6 +61,8 @@ def _get_mock_route53():
     return route53
 
 
+# Pylint thinks the test method names are too long. Test method names should be long and descriptive...
+# pylint: disable=invalid-name
 class DiscoElastiSearchTests(TestCase):
     """Test DiscoElasticSearch"""
 
@@ -74,7 +76,9 @@ class DiscoElastiSearchTests(TestCase):
         self.region = "us-west-2"
         self.environment_name = "foo"
 
-        self._es = DiscoElasticsearch(environment_name=self.environment_name,
+        self.mock_alarms = MagicMock()
+
+        self._es = DiscoElasticsearch(environment_name=self.environment_name, alarms=self.mock_alarms,
                                       config_aws=config_aws, config_es=config_es,
                                       config_vpc=config_vpc, route53=self.mock_route_53)
 
@@ -104,12 +108,16 @@ class DiscoElastiSearchTests(TestCase):
             domain_name = config["DomainName"]
             if domain_name in self.domain_configs:
                 endpoint = self.domain_configs[domain_name]["DomainStatus"]["Endpoint"]
+                domain_id = self.domain_configs[domain_name]["DomainStatus"]["DomainId"]
             else:
                 cluster_id = ''.join(random.choice("0123456789abcdef") for _ in range(60))
                 endpoint = "search-{}-{}.{}.es.amazonaws.com".format(domain_name, cluster_id,
                                                                      self.region)
+                client_id = ''.join(random.choice("0123456789") for _ in range(12))
+                domain_id = "{}/{}".format(client_id, domain_name)
 
             config["Endpoint"] = endpoint
+            config["DomainId"] = domain_id
 
             domain_config = {
                 "DomainStatus": config
@@ -128,10 +136,11 @@ class DiscoElastiSearchTests(TestCase):
         self._es._conn.create_elasticsearch_domain.side_effect = _create_elasticsearch_domain
         self._es._conn.update_elasticsearch_domain_config.side_effect = _update_elasticsearch_domain_config
 
-    # pylint doesn't like Boto3's argument names
-    # pylint: disable=C0103
-    def _get_endpoint(self, DomainName):
-        return self.domain_configs[DomainName]["DomainStatus"]["Endpoint"]
+    def _get_endpoint(self, domain_name):
+        return self.domain_configs[domain_name]["DomainStatus"]["Endpoint"]
+
+    def _get_client_id(self, domain_name):
+        return self.domain_configs[domain_name]["DomainStatus"]["DomainId"].split('/')[0]
 
     def test_domain_name_formatted(self):
         """Make sure that the domain name is formatted correctly"""
@@ -179,6 +188,15 @@ class DiscoElastiSearchTests(TestCase):
         expected_endpoint = self._get_endpoint(domain_name)
         actual_endpoint = self._es.get_endpoint(domain_name)
         self.assertEquals(actual_endpoint, expected_endpoint)
+
+    def test_get_client_id_with_a_domain(self):
+        """Verify that get_client_id returns the correct client_id for a domain"""
+        elasticsearch_name = "logs"
+        domain_name = self._es.get_domain_name(elasticsearch_name)
+        self._es.update(elasticsearch_name)
+        expected_client_id = self._get_client_id(domain_name)
+        actual_client_id = self._es.get_client_id(domain_name)
+        self.assertEquals(actual_client_id, expected_client_id)
 
     def test_get_endpoint_with_bad_domain(self):
         """Verify that get_endpoint returns None if the requested domain_name doesn't exist"""
@@ -245,6 +263,22 @@ class DiscoElastiSearchTests(TestCase):
         self.assertEquals(len(self._es.list()), 1)
         self._es.delete(elasticsearch_name)
         self.assertEquals(len(self._es.list()), 0)
+
+    def test_create_a_domain_creates_route53_record(self):
+        """Verify that creating a domain makes the expected route53 record"""
+        elasticsearch_name = "logs"
+        self._es.update(elasticsearch_name)
+        domain_name = self._es.get_domain_name(elasticsearch_name)
+        endpoint = self._get_endpoint(domain_name)
+        self.mock_route_53.create_record.assert_called_once_with(self._es.zone,
+                                                                 '{}.{}'.format(domain_name, self._es.zone),
+                                                                 'CNAME', endpoint)
+
+    def test_create_a_domain_creates_alarms(self):
+        """Verify that a domain can be deleted after its been created"""
+        elasticsearch_name = "logs"
+        self._es.update(elasticsearch_name)
+        self.mock_alarms.create_alarms.assert_called_once_with(elasticsearch_name)
 
     def test_delete_domain_with_no_domain(self):
         """Verify that deleting a domain that does not exist throws no exception and has no effect"""

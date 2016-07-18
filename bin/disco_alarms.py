@@ -35,6 +35,7 @@ from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.disco_logging import configure_logging
 from disco_aws_automation.disco_alarm_config import DiscoAlarmsConfig
 from disco_aws_automation.disco_alarm import DiscoAlarm
+from disco_aws_automation.disco_elasticsearch import DiscoElasticsearch
 
 
 def run():
@@ -49,8 +50,9 @@ def run():
     delete = args.get("--delete")
     hostclass = args.get("--hostclass")
     env = args.get("--env") or config.get("disco_aws", "default_environment")
-    alarms_config = DiscoAlarmsConfig(env)
-    disco_alarm = DiscoAlarm(env)
+    disco_elasticsearch = DiscoElasticsearch(env)
+    alarms_config = DiscoAlarmsConfig(env, elasticsearch=disco_elasticsearch)
+    disco_alarm = DiscoAlarm(env, alarm_configs=alarms_config)
 
     if args["update_notifications"]:
         notifications = alarms_config.get_notifications()

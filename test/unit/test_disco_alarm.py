@@ -17,6 +17,8 @@ TOPIC_ARN = "arn:aws:sns:us-west-2:123456789012:ci"
 ENVIRONMENT = "testenv"
 ACCOUNT_ID = "123456789012"  # mock_sns uses account id 123456789012
 MOCK_GROUP_NAME = "ci_mhcfoo_123141231245123"
+ELASTICSEARCH_CLIENT_ID = randint(100000000000, 999999999999)
+ELASTICSEARCH_DOMAIN_NAME = 'es-logs-{}'.format(ENVIRONMENT)
 
 
 class DiscoAlarmTests(TestCase):
@@ -25,6 +27,9 @@ class DiscoAlarmTests(TestCase):
     def setUp(self):
         self.autoscale = MagicMock()
         self.autoscale.get_existing_group.return_value.name = MOCK_GROUP_NAME
+        self.elasticsearch = MagicMock()
+        self.elasticsearch.get_client_id.return_value = ELASTICSEARCH_CLIENT_ID
+        self.elasticsearch.get_domain_name.return_value = ELASTICSEARCH_DOMAIN_NAME
         self.cloudwatch_mock = mock_cloudwatch()
         self.cloudwatch_mock.start()
         disco_sns = DiscoSNS(account_id=ACCOUNT_ID)
@@ -215,3 +220,25 @@ class DiscoAlarmTests(TestCase):
         self.assertEqual(1, len(alarm_configs))
         self.assertEquals({'LoadBalancerName': DiscoELB.get_elb_id('testenv', 'mhcbanana')},
                           alarm_configs[0].dimensions)
+
+    def test_get_alarm_config_es_metric(self):
+        """Test DiscoAlarmsConfig get_alarms for ES metrics"""
+        disco_alarms_config = DiscoAlarmsConfig(ENVIRONMENT, autoscale=self.autoscale,
+                                                elasticsearch=self.elasticsearch)
+        disco_alarms_config.config = get_mock_config({
+            'astro.AWS/ES.FreeStorageSpace.logs': {
+                'threshold_min': '1',
+                'duration': '60',
+                'period': '5',
+                'statistic': 'Minimum',
+                'custom_metric': 'false',
+                'level': 'critical'
+            }
+        })
+
+        alarm_configs = disco_alarms_config.get_alarms('logs')
+        self.assertEqual(1, len(alarm_configs))
+        self.assertEquals({
+            'DomainName': ELASTICSEARCH_DOMAIN_NAME,
+            'ClientId': ELASTICSEARCH_CLIENT_ID
+        }, alarm_configs[0].dimensions)

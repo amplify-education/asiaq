@@ -41,7 +41,7 @@ class DiscoRoute53(object):
         changes = throttled_call(self.route53.get_all_rrsets, zone.id)
         changes.add_change_record('UPSERT', record)
 
-        changes.commit()
+        throttled_call(changes.commit)
 
     def list_records(self, hosted_zone_name):
         """
@@ -71,7 +71,7 @@ class DiscoRoute53(object):
                          record_name, hosted_zone_name)
             return
         records.add_change_record('DELETE', selected_record)
-        records.commit()
+        throttled_call(records.commit)
 
     def delete_records_by_value(self, record_type, value):
         """

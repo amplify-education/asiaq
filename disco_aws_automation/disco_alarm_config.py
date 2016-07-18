@@ -8,8 +8,9 @@ from ConfigParser import ConfigParser
 
 from boto.ec2.cloudwatch import MetricAlarm
 
-from . import disco_aws_util, read_config, DiscoAutoscale
+from . import read_config, DiscoAutoscale
 from .exceptions import AlarmConfigError
+from .disco_aws_util import is_truthy
 from .disco_elb import DiscoELB
 
 
@@ -36,6 +37,8 @@ class DiscoAlarmConfig(object):
     Representation of a single alarm, and all its configuration options.
     """
 
+    # We take in a lot of options for configuring the alarms.
+    # pylint: disable=too-many-instance-attributes
     def __init__(self, options, maximum=True):
         self.namespace = options["namespace"]
         self.metric_name = options["metric_name"]
@@ -47,12 +50,22 @@ class DiscoAlarmConfig(object):
         self.period = int(options["period"])
         self.statistic = options["statistic"]
         self.custom_metric = options["custom_metric"].lower() == "true"
-        self.log_pattern_metric = disco_aws_util.is_truthy(options.get("log_pattern_metric", ""))
+        self.log_pattern_metric = is_truthy(options.get("log_pattern_metric", ""))
 
         if "autoscaling_group_name" in options:
             self.autoscaling_group_name = options["autoscaling_group_name"]
         else:
             self.autoscaling_group_name = None
+
+        if "es_domain_name" in options:
+            self.es_domain_name = options["es_domain_name"]
+        else:
+            self.es_domain_name = None
+
+        if "es_client_id" in options:
+            self.es_client_id = options["es_client_id"]
+        else:
+            self.es_client_id = None
 
         if options["level"] not in NOTIFICATION_LEVELS:
             raise AlarmConfigError(
@@ -90,6 +103,12 @@ class DiscoAlarmConfig(object):
 
         if self.namespace == 'AWS/ELB':
             return {'LoadBalancerName': DiscoELB.get_elb_id(self.environment, self.hostclass)}
+
+        if self.namespace == 'AWS/ES':
+            return {
+                'DomainName': self.es_domain_name,
+                'ClientId': self.es_client_id
+            }
 
         if self.custom_metric:
             key = "env_hostclass"
@@ -173,13 +192,14 @@ class DiscoAlarmsConfig(object):
     Represenation of all alarms in config file.
     """
 
-    def __init__(self, environment, config_file=None, autoscale=None):
+    def __init__(self, environment, config_file=None, autoscale=None, elasticsearch=None):
         if config_file:
             self.config = ConfigParser()
             self.config.read(config_file)
         else:
             self.config = read_config(DEFAULT_CONFIG_FILE)
         self.environment = environment
+        self.elasticsearch = elasticsearch or None  # laziliy intialized
         self._autoscale = autoscale or None  # laziliy intialized
         self._defaults = None
 
@@ -206,8 +226,14 @@ class DiscoAlarmsConfig(object):
         Extract special alarm parameters which are stored in section name
         """
         section_segments = section.split(".")
-        if len(section_segments) == 4:
-            team, namespace, metric_name, section_hostclass = section_segments
+        # If a section has four or more segments, treat the middle segments as the metric name and
+        # the ending segment as the hostclass. This is to support some Elasticsearch metrics like
+        # 'ClusterStatus.red'
+        if len(section_segments) >= 4:
+            team = section_segments[0]
+            namespace = section_segments[1]
+            metric_name = '.'.join(section_segments[2:-1])
+            section_hostclass = section_segments[-1]
         elif len(section_segments) == 3:
             team, namespace, metric_name = section_segments
             section_hostclass = None
@@ -215,6 +241,8 @@ class DiscoAlarmsConfig(object):
             raise AlarmConfigError("Skipping non-alarm like config section {0}.".format(section))
         return team, namespace, metric_name, section_hostclass
 
+    # Our alarms get a little complicated, so theres more than a few variables involved...
+    # pylint: disable=too-many-locals
     def _get_alarm_specification_dict(self, team, namespace, metric_name, hostclass, hostclass_specific,
                                       autoscaling_group_name=None):
         """
@@ -252,8 +280,13 @@ class DiscoAlarmsConfig(object):
             group = self.autoscale.get_existing_group(hostclass=hostclass)
             options["autoscaling_group_name"] = group.name
 
+        if namespace == "AWS/ES" and self.elasticsearch:
+            domain_name = self.elasticsearch.get_domain_name(hostclass)
+            options["es_domain_name"] = domain_name
+            options["es_client_id"] = self.elasticsearch.get_client_id(domain_name)
+
         # metrics for log files have special environment specific namespaces and hostclass specific names
-        if disco_aws_util.is_truthy(options.get("log_pattern_metric")):
+        if is_truthy(options.get("log_pattern_metric")):
             options["namespace"] = namespace + '/' + self.environment
             options['metric_name'] = hostclass + '-' + metric_name
 
@@ -276,6 +309,11 @@ class DiscoAlarmsConfig(object):
                     raise
             if section_hostclass and section_hostclass != hostclass:
                 # Hostclass specific section for different hostclass
+                continue
+
+            if namespace == "AWS/ES" and not self.elasticsearch:
+                logging.info("Skipping creation of %s.%s.%s.%s because no Elasticsearch object was provided",
+                             team, namespace, metric_name, section_hostclass)
                 continue
 
             options = self._get_alarm_specification_dict(
