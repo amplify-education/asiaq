@@ -369,7 +369,7 @@ class DiscoBake(object):
         reservation = self.connection.run_instances(
             source_ami_id,
             block_device_map=self.disco_storage.configure_storage(
-                hostclass, ami_id=source_ami_id, map_snapshot=False),
+                ami_id=source_ami_id),
             instance_type=self.option("bakery_instance_type"),
             key_name=self.option("bake_key"),
             network_interfaces=interfaces)

@@ -247,7 +247,7 @@ class DiscoAWS(object):
         old_config = self.autoscale.get_launch_config(hostclass=hostclass)
         if not old_config or any([extra_space, extra_disk, iops]):
             block_device_mappings = [self.disco_storage.configure_storage(
-                hostclass=hostclass, ami_id=ami.id,
+                ami_id=ami.id,
                 extra_space=extra_space, extra_disk=extra_disk, iops=iops,
                 ephemeral_disk_count=self.disco_storage.get_ephemeral_disk_count(instance_type))]
         else:

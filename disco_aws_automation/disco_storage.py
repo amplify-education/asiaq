@@ -160,22 +160,19 @@ class DiscoStorage(object):
         return device
 
     def configure_storage(self,
-                          hostclass,
                           ami_id=None,
                           extra_space=None,
                           extra_disk=None,
                           iops=None,
-                          ephemeral_disk_count=0,
-                          map_snapshot=True):
-        '''Alter block device to destroy the volume on termination and add any extra space'''
+                          ephemeral_disk_count=0):
+        ''' Cofigures block device mapping for root partition, extra disk if it's used,
+        and the ephemeral disks. Note that EBS volume mapping is no longer being created
+        here. The logic for attaching EBS volume has been moved to /etc/asiaq/init/ebs-start.sh '''
         # Pylint thinks this function has too many local variables
         # pylint: disable=R0914
 
-        # We map disk names starting at /dev/sda, but aws shifts everything after /dev/sda
-        # to the right four characters, i.e /dev/sdb becomes /dev/sdf, /dev/sdc becomes /dev/sde
-        # and so on.
-        # TODO  Figure out how to stop this from happening
-        disk_names = ['/dev/sd' + chr(ord('a') + i) for i in range(0, 26)]
+        # disk names only go up to /dev/sdy. /dev/sdz is reserved for EBS volume
+        disk_names = ['/dev/sd' + chr(ord('a') + i) for i in range(0, 25)]
         if ami_id:
             ami = self.connection.get_image(ami_id)
             if not ami:
@@ -194,16 +191,6 @@ class DiscoStorage(object):
         bdm[disk_names[current_disk]] = sda
         logging.debug("mapped %s to root partition", disk_names[current_disk])
         current_disk += 1
-
-        # Map the latest snapshot for this hostclass
-        if map_snapshot:
-            latest = self.get_latest_snapshot(hostclass)
-            if latest:
-                self.wait_for_snapshot(latest)
-                current_name = disk_names[current_disk]
-                bdm[current_name] = self.create_snapshot_bdm(latest, iops)
-                logging.debug("mapped %s to snapshot %s", current_name, latest.id)
-                current_disk += 1
 
         # Map extra disk
         if extra_disk:
