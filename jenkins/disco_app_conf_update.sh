@@ -14,7 +14,7 @@ if [[ "$1" == "-h" || "$1" == "--help" || "$1" == "" ]] ; then
     exit 1
 fi
 
-source "$(dirname $0)/boto_init.sh"
+source /opt/wgen/bin/use_asiaq_from_rpm.sh
 
 env="$1"
 conf_dir="$RUN_DIR/app_conf/${env}"
