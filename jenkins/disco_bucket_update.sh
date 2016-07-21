@@ -89,9 +89,11 @@ function update_bucket() {
         CANONICAL_ID="$(aws --region $bucket_region s3api get-bucket-acl --bucket $bucket_name | jq -r .Owner.ID)"
     fi
 
-    # Apply the lifecycle policy
-    aws s3api --region $bucket_region put-bucket-lifecycle --bucket $bucket_name \
-        --lifecycle-configuration file://$lifecycle_file
+    if [ -s "$lifecycle_file" ] ; then
+        # Apply the lifecycle policy
+        aws s3api --region $bucket_region put-bucket-lifecycle --bucket $bucket_name \
+            --lifecycle-configuration file://$lifecycle_file
+    fi
 
     # Apply bucket policy, if one exists
     if [[ -e ${base_file}.iam ]] ; then
