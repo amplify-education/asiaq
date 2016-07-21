@@ -426,7 +426,8 @@ class DiscoBake(object):
             if not no_destroy:
                 instance.terminate()
             else:
-                logging.info("Examine instance command: ssh root@%s",
+                logging.info("Examine instance command: "
+                             "ssh -o UserKnownHostsFile=/dev/null root@%s",
                              instance.ip_address or instance.private_ip_address)
 
         return image
