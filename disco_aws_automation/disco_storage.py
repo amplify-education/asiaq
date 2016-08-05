@@ -12,7 +12,8 @@ snapshots to backup hostclasses with persistent EBS storage
 
 from collections import defaultdict
 import logging
-
+from datetime import datetime, timedelta
+import dateutil.parser as dateparser
 import boto
 
 from .resource_helper import wait_for_state, TimeoutError
@@ -298,11 +299,14 @@ class DiscoStorage(object):
         else:
             logging.error("Couldn't delete snapshot %s.")
 
-    def cleanup_ebs_snapshots(self, keep_last_n):
+    def cleanup_ebs_snapshots(self, keep_last_n, keep_last_days=None):
         """
-        Removes all but the latest n snapshots for each hostclass
+        Removes all snapshots for each hostclass in the environment.
+        Guarantees that at least keep_last_n snapshots will be kept.
+        keep_last_days may also be specified to keep recently created snapshots in addition to the last n
 
-        :param keep_last_n:  The number of snapshots to keep per hostclass.  Must be non-zero.
+        :param keep_last_n:  The minimum number of snapshots to keep per hostclass.  Must be non-zero.
+        :param keep_last_days:  If specified, any snapshot younger than this will be kept
         """
         if keep_last_n <= 0:
             raise ValueError("You must keep at least one snapshot.")
@@ -314,5 +318,21 @@ class DiscoStorage(object):
             for hostclass_snapshots in snapshots_dict.values():
                 snapshots_to_delete = sorted(hostclass_snapshots,
                                              key=lambda snapshot: snapshot.start_time)[:-keep_last_n]
+
                 for snapshot in snapshots_to_delete:
+                    snapshot_date = dateparser.parse(snapshot.start_time)
+
+                    if keep_last_days:
+                        now = self._get_date_now(timezone=snapshot_date.tzinfo)
+                        date_cutoff = now - timedelta(days=keep_last_days)
+                        if snapshot_date >= date_cutoff:
+                            logging.debug(
+                                "Not deleting snapshot %s because it is less than %s days old",
+                                snapshot.id, keep_last_days
+                            )
+                            continue
                     self.delete_snapshot(snapshot.id)
+
+    def _get_date_now(self, timezone):
+        """a private method for returning the current date to make mocking easier"""
+        return datetime.now(tz=timezone)

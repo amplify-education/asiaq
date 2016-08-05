@@ -6,7 +6,7 @@ import random
 
 import dateutil.parser as dateparser
 import boto3
-from mock import MagicMock
+from mock import MagicMock, call
 from moto import mock_ec2
 
 from disco_aws_automation import DiscoStorage
@@ -43,12 +43,12 @@ class DiscoStorageTests(TestCase):
         """get_latest_snapshot() returns None if no snapshots exist for hostclass"""
         self.assertIsNone(self.storage.get_latest_snapshot("mhcfoo"))
 
-    def mock_snap(self, hostclass, when=None):
+    def mock_snap(self, hostclass, when=None, snap_id=None):
         """Creates MagicMock for a snapshot"""
         ret = MagicMock()
         ret.tags = {"hostclass": hostclass}
         ret.start_time = when if when else dateparser.parse("2016-01-19 16:38:48+00:00")
-        ret.id = 'snap-' + str(random.randrange(0, 9999999))
+        ret.id = snap_id if snap_id else 'snap-' + str(random.randrange(0, 9999999))
         ret.volume_size = random.randrange(1, 9999)
         return ret
 
@@ -100,6 +100,23 @@ class DiscoStorageTests(TestCase):
 
         self.assertEquals(2, len(self.storage.get_snapshots()))
         self.assertEquals(3, len(DiscoStorage(environment_name='otherenv').get_snapshots()))
+
+    @mock_ec2
+    def test_clean_up_ebs_snapshots_by_date(self):
+        """Test deleting snapshots older than a certain day"""
+        snap_list = [
+            self.mock_snap("mhcfoo", "2016-01-01 00:00:00+00:00", "snap1"),
+            self.mock_snap("mhcfoo", "2016-01-07 00:00:00+00:00", "snap2"),
+            self.mock_snap("mhcfoo", "2016-01-14 00:00:00+00:00", "snap3")]
+
+        self.storage.connection.get_all_snapshots = MagicMock(return_value=snap_list)
+        self.storage._get_date_now = MagicMock(return_value=dateparser.parse("2016-01-14 00:00:00+00:00"))
+        self.storage.delete_snapshot = MagicMock()
+
+        self.storage.cleanup_ebs_snapshots(keep_last_n=1, keep_last_days=7)
+
+        self.storage.delete_snapshot.assert_has_calls([call('snap1')], any_order=True)
+        self.assertEquals(1, self.storage.delete_snapshot.call_count)
 
     @mock_ec2
     def test_create_ebs_snapshot(self):

@@ -42,6 +42,8 @@ def get_parser():
     parser_cleanup.set_defaults(mode='cleanup')
     parser_cleanup.add_argument('--keep', dest='keep', required=False, type=int, default=3,
                                 help='A non-zero number of snapshots to keep per hostclass')
+    parser_cleanup.add_argument('--keep-days', dest='keep_days', required=False, type=int,
+                                help='Do not delete snapshots that are less than this number of days old')
 
     parser_delete = subparsers.add_parser(
         'delete', help='Delete a set of snapshots')
@@ -96,7 +98,7 @@ def run():
                 snapshot.tags['hostclass'], snapshot.id, snapshot.status,
                 snapshot.start_time, snapshot.volume_size))
     elif args.mode == "cleanup":
-        aws.disco_storage.cleanup_ebs_snapshots(args.keep)
+        aws.disco_storage.cleanup_ebs_snapshots(args.keep, keep_last_days=args.keep_days)
     elif args.mode == "capture":
         instances = instances_from_args(aws, args)
         if not instances:
