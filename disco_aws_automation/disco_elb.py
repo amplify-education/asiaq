@@ -79,8 +79,15 @@ class DiscoELB(object):
         # Populate our ELB info dicts
         for tag_description in tag_descriptions:
             elb_id = tag_description["LoadBalancerName"]
-            # If they have an 'elb_name' tag, use that instead of the actual LoadBalancerName
-            elb_name = get_tag_value(tag_description["Tags"], "elb_name") or elb_id
+            # Try to figure out the name of the ELB from its tags
+            hostclass = get_tag_value(tag_description["Tags"], "hostclass")
+            environment = get_tag_value(tag_description["Tags"], "environment")
+            testing = get_tag_value(tag_description["Tags"], "is_testing")
+            if hostclass and environment and testing:
+                elb_name = self.get_elb_name(environment, hostclass, testing)
+            else:
+                # Otherwise, look for the elb_name tag or just use the name of the load balancer
+                elb_name = get_tag_value(tag_description["Tags"], "elb_name") or elb_id
             elb = [elb_in_env for elb_in_env in elbs_in_env
                    if elb_in_env["LoadBalancerName"] == elb_id][0]
             availability_zones = ','.join(elb["AvailabilityZones"])
@@ -211,7 +218,9 @@ class DiscoELB(object):
                 'SecurityGroups': security_groups,
                 'Subnets': subnets,
                 'Tags': [
-                    {'Key': 'elb_name', 'Value': elb_name}
+                    {'Key': 'hostclass', 'Value': hostclass},
+                    {'Key': 'environment', 'Value': self.vpc.environment_name},
+                    {'Key': 'is_testing', 'Value': '1' if testing else '0'}
                 ]
             }
 
