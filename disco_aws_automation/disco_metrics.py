@@ -124,7 +124,7 @@ class DiscoMetrics(object):
         Returns df disk utilization percentage info in a map.
         Raises RuntimeError if it fails to parse df output.
         """
-        output = check_output(['df'])
+        output = check_output(['df', '-P'])
         regex = re.compile(r"(\S+)\s+\d+\s+\d+\s+\d+\s+(\d+)%.*")
         info = {regex.match(line).group(1): regex.match(line).group(2)
                 for line in output.split("\n")
