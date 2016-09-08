@@ -112,6 +112,7 @@ def _create_mock_es_client(indices, indices_health, snapshots, total_bytes):
     es_client.snapshot = MagicMock()
     es_client.snapshot.get.side_effect = _mock_snapshot_get
     es_client.snapshot.create.side_effect = _mock_snapshot_create
+    es_client.snapshot.restore = MagicMock()
 
     return es_client
 
@@ -167,13 +168,14 @@ class DiscoESArchiveTests(TestCase):
         self._es_archive._load_policy_json = MagicMock()
         self._es_archive._load_policy_json.return_value = MOCK_POLICY_TEXT
 
-    def test_archive(self):
-        """Verify that ES archiving works"""
         # Setting up S3 client
         self._es_archive._s3_client = MagicMock()
         self._es_archive._s3_client.list_buckets.return_value = {
             'Buckets': [{'Name': BUCKET_NAME}]
         }
+
+    def test_archive(self):
+        """Verify that ES archiving works"""
 
         # Calling archive for testing
         snap_stats = self._es_archive.archive()
@@ -244,21 +246,33 @@ class DiscoESArchiveTests(TestCase):
         self._es_archive.es_client.indices.delete.assert_called_once_with(index='foo-2016.06.01')
 
     def test_restore(self):
-        """Verify that ES resotre operation works"""
+        """Verify that ES restore operation works"""
         # Calling restore for testing
         self._es_archive.restore('2016.06.01', '2016.06.07')
 
         expected_restore_calls = [
-            call(repository=REPOSITORY_NAME, snapshot='foo-2016.06.06'),
-            call(repository=REPOSITORY_NAME, snapshot='foo-2016.06.07')]
+            call(
+                repository=REPOSITORY_NAME,
+                snapshot='foo-2016.06.06',
+                wait_for_completion=True
+            ),
+            call(
+                repository=REPOSITORY_NAME,
+                snapshot='foo-2016.06.07',
+                wait_for_completion=True
+            )
+        ]
 
         self._es_archive.es_client.snapshot.restore.assert_has_calls(expected_restore_calls)
 
     def test_restore_date_query(self):
-        """Verify that date range query works correctly in ES resotre operation"""
+        """Verify that date range query works correctly in ES restore operation"""
         # Calling restore for testing
+
         self._es_archive.restore('2016.06.01', '2016.06.06')
 
         self._es_archive.es_client.snapshot.restore.assert_called_once_with(
             repository=REPOSITORY_NAME,
-            snapshot='foo-2016.06.06')
+            snapshot='foo-2016.06.06',
+            wait_for_completion=True
+        )

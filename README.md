@@ -2002,6 +2002,7 @@ archive_max_shards=             # The maximum number of shards allowed by the gr
 archive_role=                   # Name of the assumed role used by the archival process (string)
 archive_index_prefix_pattern=   # Regex pattern used to match with the Elasticsearch indices that are included in the archival process. This pattern only tries to match the naming part of the indices before the date string. (string)
 archive_repository=             # Name of the repository used to store the index snapshots (string)
+version=                        # Version of Elasticsearch. See http://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-configuration-api.html
 ```
 
 Additionally, access to the Elasticsearch endpoint is restricted based on IP address via Access Policy. Instances in a VPC need to ship logs to Elasticsearch via a proxy server. This proxy server's IP is read from `disco_aws.ini`. The important options are `proxy_hostclass` in the `disco_aws` section as well as the `eip` in the hostclass section referenced from the `proxy_hostclass` option.

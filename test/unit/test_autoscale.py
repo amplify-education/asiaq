@@ -20,13 +20,18 @@ class DiscoAutoscaleTests(TestCase):
         self.environment_name = "us-moon-1"
         self._autoscale = DiscoAutoscale("us-moon-1", self._mock_connection, self._mock_boto3_connection)
 
-    def mock_group(self, hostclass, name=None):
+    def mock_group(self, hostclass, name=None, launch_config_name=None):
         '''Creates a mock autoscaling group for hostclass'''
         group_mock = MagicMock()
         group_mock.name = name or self._autoscale.get_new_groupname(hostclass)
         group_mock.min_size = 1
         group_mock.max_size = 1
         group_mock.desired_capacity = 1
+        if launch_config_name is not None:
+            group_mock.launch_config_name = launch_config_name
+        else:
+            group_mock.launch_config_name = self.mock_lg(hostclass, name=name).name
+
         return group_mock
 
     def mock_inst(self, hostclass, group_name=None):
@@ -268,3 +273,23 @@ class DiscoAutoscaleTests(TestCase):
         self._mock_connection.get_all_launch_configurations.return_value = groups
 
         self.assertEqual(self._autoscale.get_configs(), good_lgs)
+
+    def test_get_launch_configs_filter(self):
+        '''get_launch_configs correctly filters out empty launch config names'''
+        mock_groups = [
+            self.mock_group("mhcfoo"),
+            self.mock_group("mhcbar"),
+            self.mock_group("mhcfoo", launch_config_name="")
+        ]
+
+        self._autoscale.get_existing_groups = MagicMock(return_value=mock_groups)
+        self._autoscale.get_configs = MagicMock()
+
+        self._autoscale.get_launch_configs()
+
+        self._autoscale.get_configs.assert_called_once_with(
+            names=[
+                mock_groups[0].launch_config_name,
+                mock_groups[1].launch_config_name
+            ]
+        )

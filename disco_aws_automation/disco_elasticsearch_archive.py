@@ -484,6 +484,7 @@ class DiscoESArchive(object):
         """
         Bring back indices within the specified date range (inclusive) from archive to ES cluster
         """
+        self._create_repository()
         date_pattern = re.compile(r'^[\d]{4}(\.[\d]{2}){2}$')
         if not re.match(date_pattern, begin_date):
             raise RuntimeError("Invalid begin date (yyyy.mm.dd): {0}".format(begin_date))
@@ -523,5 +524,8 @@ class DiscoESArchive(object):
         for snap in snapshots:
             logger.info("Restoring snapshot: %s", snap)
             if not dry_run:
-                self.es_client.snapshot.restore(repository=self._repository_name,
-                                                snapshot=snap)
+                self.es_client.snapshot.restore(
+                    repository=self._repository_name,
+                    snapshot=snap,
+                    wait_for_completion=True
+                )

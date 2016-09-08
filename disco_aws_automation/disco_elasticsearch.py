@@ -288,6 +288,11 @@ class DiscoElasticsearch(object):
             desired_es_config = es_config or self._get_es_config(desired_elasticsearch_name)
 
             if desired_elasticsearch_name in all_elasticsearch_names:
+                try:
+                    del(desired_es_config["ElasticsearchVersion"])
+                    logging.debug("Ignoring ElasticsearchVersion specification on update")
+                except KeyError:
+                    pass
                 logger.info('Updating ElasticSearch domain %s', domain_name)
                 throttled_call(self.conn.update_elasticsearch_domain_config, **desired_es_config)
             else:
@@ -393,6 +398,7 @@ class DiscoElasticsearch(object):
         allowed_source_ips = self.get_es_option("allowed_source_ips", elasticsearch_name).split()
 
         config = {
+            'ElasticsearchVersion': self.get_es_option('version', elasticsearch_name),
             'DomainName': domain_name,
             'ElasticsearchClusterConfig': es_cluster_config,
             'EBSOptions': ebs_option,

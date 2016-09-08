@@ -334,7 +334,11 @@ class DiscoAutoscale(object):
         """Returns all launch configurations for a hostclass if any exist, None otherwise"""
         group_list = self.get_existing_groups(hostclass=hostclass, group_name=group_name)
         if group_list:
-            return self.get_configs(names=[group.launch_config_name for group in group_list])
+            return self.get_configs(names=[
+                group.launch_config_name
+                for group in group_list
+                if group.launch_config_name
+            ])
         return None
 
     def get_launch_config(self, hostclass=None, group_name=None):
