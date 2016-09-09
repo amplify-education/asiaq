@@ -10,6 +10,8 @@ from datetime import datetime
 from ConfigParser import NoOptionError
 
 from dateutil import parser as dateutil_parser
+from tabulate import tabulate
+from collections import defaultdict
 
 from disco_aws_automation import DiscoAWS, DiscoBake, read_config
 from disco_aws_automation.resource_helper import TimeoutError
@@ -266,39 +268,49 @@ def run():
             ami_dict = bake.list_amis_by_instance(instances)
             now = datetime.utcnow()
 
+        fields = (
+            "id hostclass ip state hostname owner type ami smoke "
+            "ami_age uptime private_ip az product sg"
+        )
+
+        instance_info = defaultdict(list)
         for instance in instances_sorted:
-            line = u"{0} {1:<30} {2:<15}".format(
-                instance.id, instance.tags.get("hostclass", "-"),
-                instance.ip_address or instance_to_private_ip[instance.id])
+            instance_info["id"].append(instance.id)
+            instance_info["hostclass"].append(instance.tags.get("hostclass", "-"))
+            instance_info["ip"].append(instance.ip_address or instance_to_private_ip[instance.id])
             if args.state or most:
-                line += u" {0:<10}".format(instance.state)
+                instance_info["state"].append(instance.state)
             if args.hostname or most:
-                line += u" {0:<1}".format("-" if instance.tags.get("hostname") is None else "y")
+                instance_info["booted"].append("-" if instance.tags.get("hostname") is None else "y")
             if args.owner or most:
-                line += u" {0:<11}".format(instance.tags.get("owner", u"-"))
+                instance_info["owner"].append(instance.tags.get("owner", u"-"))
             if args.instance_type or most:
-                line += u" {0:<10}".format(instance.instance_type)
+                instance_info["type"].append(instance.instance_type)
             if args.ami or most:
-                line += u" {0:<12}".format(instance.image_id)
+                instance_info["ami"].append(instance.image_id)
             if args.smoke or most:
-                line += u" {0:<1}".format("-" if instance.tags.get("smoketest") is None else "y")
+                instance_info["smoketest"].append("-" if instance.tags.get("smoketest") is None else "y")
             if args.ami_age or most:
                 creation_time = bake.get_ami_creation_time(ami_dict.get(instance.id))
-                line += u" {0:<4}".format(DiscoBake.time_diff_in_hours(now, creation_time))
+                instance_info["ami_age"].append(DiscoBake.time_diff_in_hours(now, creation_time))
             if args.uptime or most:
                 launch_time = dateutil_parser.parse(instance.launch_time)
                 now_with_tz = now.replace(tzinfo=launch_time.tzinfo)  # use a timezone-aware `now`
-                line += u" {0:<3}".format(DiscoBake.time_diff_in_hours(now_with_tz, launch_time))
+                instance_info["uptime"].append(DiscoBake.time_diff_in_hours(now_with_tz, launch_time))
             if args.private_ip or args.all:
-                line += u" {0:<16}".format(instance_to_private_ip[instance.id])
+                instance_info["private_ip"].append(instance_to_private_ip[instance.id])
             if args.availability_zone or args.all:
-                line += u" {0:<12}".format(instance.placement)
+                instance_info["az"].append(instance.placement)
             if args.productline or args.all:
                 productline = instance.tags.get("productline", u"unknown")
-                line += u" {0:<15}".format(productline if productline != u"unknown" else u"-")
+                instance_info["product"].append(productline if productline != u"unknown" else u"-")
             if args.securitygroup or args.all:
-                line += u" {0:15}".format(instance.groups[0].name)
-            print(line)
+                instance_info["sg"].append(instance.groups[0].name)
+        for key, data in instance_info.iteritems():
+            data.insert(0, key)
+        table = tabulate(instance_info, headers="firstrow", tablefmt="plain").split("\n", 1)
+        print("\033[1m" + table[0] + "\033[0m", file=sys.stderr)
+        print(table[1])
 
     elif args.mode == "terminate":
         instances = instances_from_args(aws, args)

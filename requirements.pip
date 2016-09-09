@@ -12,3 +12,4 @@ semantic_version>=2.4.2
 requests_aws4auth<2
 # Since aws ES is 1.5 we must pin elasticsearch-py as follows:
 elasticsearch>=1.0.0,<2.0.0
+tabulate>=0.7.5
