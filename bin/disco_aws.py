@@ -226,6 +226,36 @@ def get_preferred_private_ip(instance):
         return interfaces[1].private_ip_address
 
 
+def format_listhosts_header(args, most):
+    line = u"{0:<11} {1:<25} {2:<15}".format('ID', 'Hostclass', 'IP')
+    if args.state or most:
+        line += u" {0:<10}".format('State')
+    if args.hostname or most:
+        line += u" {0:<30}".format('Hostname')
+    if args.owner or most:
+        line += u" {0:<11}".format('Owner')
+    if args.instance_type or most:
+        line += u" {0:<10}".format('Type')
+    if args.ami or most:
+        line += u" {0:<12}".format('Image ID')
+    if args.smoke or most:
+        line += u" {0:<5}".format('Smoke')
+    if args.ami_age or most:
+        line += u" {0:<7}".format('AMI Age')
+    if args.uptime or most:
+        line += u" {0:<6}".format('Uptime')
+    if args.private_ip or args.all:
+        line += u" {0:<16}".format('Private IP')
+    if args.availability_zone or args.all:
+        line += u" {0:<12}".format('Avail.Zone')
+    if args.productline or args.all:
+        line += u" {0:<15}".format('Prod.Line')
+    if args.securitygroup or args.all:
+        line += u" {0:15}".format('Security Group')
+
+    return line
+
+
 def run():
     """Parses command line and dispatches the commands"""
     config = read_config()
@@ -266,14 +296,20 @@ def run():
             ami_dict = bake.list_amis_by_instance(instances)
             now = datetime.utcnow()
 
+        header = format_listhosts_header(args, most)
+        divider = '-'.ljust(len(header), '-')
+
+        print("\n" + header + "\n" + divider)
+
         for instance in instances_sorted:
-            line = u"{0} {1:<30} {2:<15}".format(
+            line = u"{0:<11} {1:<25} {2:<15}".format(
                 instance.id, instance.tags.get("hostclass", "-"),
                 instance.ip_address or instance_to_private_ip[instance.id])
             if args.state or most:
                 line += u" {0:<10}".format(instance.state)
             if args.hostname or most:
-                line += u" {0:<1}".format("-" if instance.tags.get("hostname") is None else "y")
+                line += u" {0:<30}".format(
+                    "-" if instance.tags.get("hostname") is None else instance.tags.get("hostname"))
             if args.owner or most:
                 line += u" {0:<11}".format(instance.tags.get("owner", u"-"))
             if args.instance_type or most:
@@ -281,14 +317,14 @@ def run():
             if args.ami or most:
                 line += u" {0:<12}".format(instance.image_id)
             if args.smoke or most:
-                line += u" {0:<1}".format("-" if instance.tags.get("smoketest") is None else "y")
+                line += u" {0:<5}".format("-" if instance.tags.get("smoketest") is None else "y")
             if args.ami_age or most:
                 creation_time = bake.get_ami_creation_time(ami_dict.get(instance.id))
-                line += u" {0:<4}".format(DiscoBake.time_diff_in_hours(now, creation_time))
+                line += u" {0:<7}".format(DiscoBake.time_diff_in_hours(now, creation_time))
             if args.uptime or most:
                 launch_time = dateutil_parser.parse(instance.launch_time)
                 now_with_tz = now.replace(tzinfo=launch_time.tzinfo)  # use a timezone-aware `now`
-                line += u" {0:<3}".format(DiscoBake.time_diff_in_hours(now_with_tz, launch_time))
+                line += u" {0:<6}".format(DiscoBake.time_diff_in_hours(now_with_tz, launch_time))
             if args.private_ip or args.all:
                 line += u" {0:<16}".format(instance_to_private_ip[instance.id])
             if args.availability_zone or args.all:
@@ -299,6 +335,8 @@ def run():
             if args.securitygroup or args.all:
                 line += u" {0:15}".format(instance.groups[0].name)
             print(line)
+
+        print(divider + "\n" + header)
 
     elif args.mode == "terminate":
         instances = instances_from_args(aws, args)
