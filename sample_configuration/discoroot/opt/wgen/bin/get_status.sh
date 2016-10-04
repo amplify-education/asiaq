@@ -150,11 +150,27 @@ function check_rabbitmq()
 # get mongodb password
 function get_mongo_pass()
 {
+    local mongo_user="${MONGO_USER:-disco}"
     if [ -e "$MONGO_PASS_FILE" ];
     then
         # awk in English, Find the line contains db.addUser("disco" from /opt/wgen/discodb/configure_mongo.js
         # then pick the 2nd column, remove all ",),; and use the last one for disco user password
-        $AWK '/db.addUser\("disco",/ {pass = $2} END{gsub(/"|\)|;/, "", pass); print pass}' $MONGO_PASS_FILE
+        $AWK '/db.addUser\("'$mongo_user'",/ {pass = $2} END{gsub(/"|\)|;/, "", pass); print pass}' $MONGO_PASS_FILE
+    else
+        echo ""
+    fi
+}
+
+# get mongodb password
+function get_mongo3_pass()
+{
+    local mongo_user="${MONGO_USER:-disco}"
+    if [ -e "$MONGO_PASS_FILE" ];
+    then
+        # awk in English, Find the line contains db.createUser("username" from config file
+        # then pick the 2nd column, remove all ",),; and use the last one for disco user password
+        # TODO: rewrite with some python script ot use service instead
+        $AWK '/db.auth\("'$mongo_user'",/ {pass = $3} END{gsub(/"|\)|;/, "", pass); print pass}' $MONGO_PASS_FILE
     else
         echo ""
     fi
@@ -176,6 +192,21 @@ function check_mongod()
     fi
 }
 
+function check_mongod_admin()
+{
+    local mongo_pass=$(get_mongo3_pass)
+    # If mongo password is not found because no password file.
+    # And we are checking mongodb on the hostclass. Something is serious broken in mongodb hostclass.
+    # We will trigger smoketest failure to force devs to fix mongo related hostclass.
+    $MONGO_STAT -u $MONGO_USER -p $mongo_pass -h localhost -n 1 --authenticationDatabase admin &> /dev/null
+    if [ "$?" = "0" ]
+    then
+        return 0
+    else
+        >&2 echo "Mongodb is not working"
+        return 1
+    fi
+}
 
 function get_status() {
 
