@@ -165,7 +165,8 @@ class DiscoELB(object):
     def get_or_create_elb(self, hostclass, security_groups, subnets, hosted_zone_name,
                           health_check_url, instance_protocol, instance_port,
                           elb_protocols, elb_ports, elb_public, sticky_app_cookie,
-                          idle_timeout=None, connection_draining_timeout=None, testing=False, tags=None):
+                          idle_timeout=None, connection_draining_timeout=None, testing=False, tags=None,
+                          cross_zone_load_balancing=True):
         """
         Returns an elb.
         This updates an existing elb if it exists, otherwise this creates a new elb.
@@ -188,6 +189,7 @@ class DiscoELB(object):
                                                requests to resolve before removing EC2 instance from ELB
             testing (bool): True if the ELB will be used for testing purposes only.
             tags (dict): dict of tag names as keys and tag values. Removing tags is not supported
+            cross_zone_load_balancing (bool): True if ELB should have load balancing across zones enabled.
         """
         cname = self.get_cname(hostclass, hosted_zone_name, testing=testing)
         elb_id = DiscoELB.get_elb_id(self.vpc.environment_name, hostclass, testing=testing)
@@ -235,12 +237,18 @@ class DiscoELB(object):
 
         self._setup_health_check(elb_id, health_check_url, instance_protocol, instance_port, elb_name)
         self._setup_sticky_cookies(elb_id, elb_ports, sticky_app_cookie, elb_name)
-        self._update_elb_attributes(elb_id, idle_timeout, connection_draining_timeout)
+        self._update_elb_attributes(
+            elb_id,
+            idle_timeout,
+            connection_draining_timeout,
+            cross_zone_load_balancing
+        )
         self._update_tags(elb_id, tags)
 
         return elb
 
-    def _update_elb_attributes(self, elb_id, idle_timeout, connection_draining_timeout):
+    def _update_elb_attributes(self, elb_id, idle_timeout, connection_draining_timeout,
+                               cross_zone_load_balancing):
         updates = {}
         if idle_timeout:
             updates['ConnectionSettings'] = {
@@ -257,6 +265,10 @@ class DiscoELB(object):
                 'Enabled': False,
                 'Timeout': 0
             }
+
+        updates['CrossZoneLoadBalancing'] = {
+            'Enabled': cross_zone_load_balancing
+        }
 
         if updates:
             throttled_call(self.elb_client.modify_load_balancer_attributes,
@@ -380,7 +392,7 @@ class DiscoELB(object):
         instance_ids    A list of instance_ids to filter to. Defaults to all instances in the ELB.
         state           The state to wait for the instances. Should be one of ['InService', 'OutOfService',
                         'Unknown']. Defaults to 'InService'.
-        timeout         The number of seconds to wait for instances to reach that state. Default: 60.
+        timeout         The number of seconds to wait for instances to reach that state. Default: 600.
         See http://boto3.readthedocs.io/en/latest/reference/services/elb.html
         """
         elb = self.get_elb(hostclass=hostclass, testing=testing)

@@ -4,7 +4,10 @@ import copy
 
 from mock import MagicMock, call
 
-from disco_aws_automation.disco_subnet import DiscoSubnet
+from disco_aws_automation.disco_subnet import (
+    DiscoSubnet,
+    DYNO_NAT_TAG_KEY
+)
 from test.helpers.patch_disco_aws import TEST_ENV_NAME
 
 
@@ -14,6 +17,7 @@ MOCK_VPC_NAME = 'mock_vpc_name'
 MOCK_VPC_ID = 'mock_vpc_id'
 MOCK_ROUTE_TABLE_ID = 'centralized_route_table_id'
 MOCK_ALLOCATION_ID = 'mock_allocation_id'
+MOCK_PUBLIC_IP = '102.102.102.102'
 MOCK_NAT_GATEWAY_ID = 'nat_gateway_id'
 MOCK_SUBNET_ID = 'subnet_id'
 MOCK_ROUTE_TABLE_ASSOC_ID = 'route_table_association_id'
@@ -21,7 +25,8 @@ MOCK_REPLACE_CIDR = '111.111.111.111/24'
 MOCK_SUBNET = {'SubnetId': MOCK_SUBNET_ID,
                'State': 'available',
                'VpcId': MOCK_VPC_ID,
-               'CidrBlock': MOCK_CIDR}
+               'CidrBlock': MOCK_CIDR,
+               'Tags': []}
 MOCK_ROUTE_TABLE = {'RouteTableId': MOCK_ROUTE_TABLE_ID,
                     'Routes': [{'DestinationCidrBlock': MOCK_REPLACE_CIDR,
                                 'GatewayId': 'mock_gateway_id1'},
@@ -35,7 +40,8 @@ MOCK_NEW_ROUTE_TABLE = {'RouteTableId': 'new_route_table_id'}
 MOCK_NAT_GATEWAY = {'VpcId': MOCK_VPC_ID,
                     'SubnetId': MOCK_SUBNET_ID,
                     'NatGatewayId': MOCK_NAT_GATEWAY_ID,
-                    'NatGatewayAddresses': [{'AllocationId': MOCK_ALLOCATION_ID}]}
+                    'NatGatewayAddresses': [{'AllocationId': MOCK_ALLOCATION_ID,
+                                             'PublicIp': MOCK_PUBLIC_IP}]}
 MOCK_ROUTE = {'RouteId': 'route_id'}
 MOCK_TAG = [{'Value': "{0}_{1}_{2}".format(TEST_ENV_NAME,
                                            MOCK_VPC_NAME,
@@ -84,7 +90,10 @@ def _get_ec2_conn_mock(test_disco_subnet):
             return {'Subnets': []}
 
     def _mock_create_subnet(*_, **__):
-        return {'Subnet': MOCK_SUBNET}
+        if not test_disco_subnet.existing_subnet:
+            test_disco_subnet.existing_subnet = MOCK_SUBNET
+
+        return {'Subnet': test_disco_subnet.existing_subnet}
 
     def _mock_create_route(*_, **params):
         test_disco_subnet.route_table['Routes'].append(
@@ -127,6 +136,17 @@ def _get_ec2_conn_mock(test_disco_subnet):
     return ret
 
 
+def _get_disco_eip_mock():
+    ret = MagicMock()
+
+    eip_mock = MagicMock()
+    eip_mock.allocation_id = MOCK_ALLOCATION_ID
+
+    ret.allocate.return_value = eip_mock
+
+    return ret
+
+
 class DiscoSubnetTests(TestCase):
     """Test DiscoSubnet"""
 
@@ -137,9 +157,11 @@ class DiscoSubnetTests(TestCase):
 
         self.mock_metanetwork = _get_metanetwork_mock()
         self.mock_ec2_conn = _get_ec2_conn_mock(self)
+        self.mock_disco_eip = _get_disco_eip_mock()
 
         self.subnet = DiscoSubnet(MOCK_SUBNET_NAME, self.mock_metanetwork,
-                                  MOCK_CIDR, MOCK_ROUTE_TABLE_ID, self.mock_ec2_conn)
+                                  MOCK_CIDR, MOCK_ROUTE_TABLE_ID, self.mock_ec2_conn,
+                                  self.mock_disco_eip)
 
     def test_init_subnet_with_cntrlzd_rt_tbl(self):
         """ Verify that subnet is initialized properly when there is an existing centralized route table """
@@ -224,13 +246,26 @@ class DiscoSubnetTests(TestCase):
 
     def test_create_nat_gateway(self):
         """ Verify creation of a new NAT gateway for the subnet """
-        self.subnet.create_nat_gateway(MOCK_ALLOCATION_ID)
+        self.subnet.create_nat_gateway(eip_allocation_id=MOCK_ALLOCATION_ID)
 
         self.assertEqual(self.subnet.nat_eip_allocation_id, MOCK_ALLOCATION_ID)
         self.assertEqual(self.subnet.nat_gateway, MOCK_NAT_GATEWAY)
 
         self.mock_ec2_conn.create_nat_gateway.assert_called_once_with(AllocationId=MOCK_ALLOCATION_ID,
                                                                       SubnetId=MOCK_SUBNET['SubnetId'])
+
+    def test_create_dyno_nat_gateway(self):
+        """ Verify creation of a new NAT gateway for the subnet """
+        self.subnet.create_nat_gateway()
+
+        self.mock_disco_eip.allocate.assert_called_once_with()
+        self.assertEqual(self.subnet.nat_eip_allocation_id, MOCK_ALLOCATION_ID)
+        self.assertEqual(self.subnet.nat_gateway, MOCK_NAT_GATEWAY)
+        self.mock_ec2_conn.create_nat_gateway.assert_called_once_with(AllocationId=MOCK_ALLOCATION_ID,
+                                                                      SubnetId=MOCK_SUBNET['SubnetId'])
+        self.mock_ec2_conn.create_tags.assert_has_calls(
+            [call(Resources=[MOCK_SUBNET_ID],
+                  Tags=[{'Key': DYNO_NAT_TAG_KEY, 'Value': ''}])])
 
     def test_delete_nat_gateway(self):
         """ Verify that a NAT gateway can be properly deleted """
@@ -240,6 +275,19 @@ class DiscoSubnetTests(TestCase):
 
         self.assertEqual(self.subnet.nat_eip_allocation_id, None)
         self.assertEqual(self.subnet.nat_gateway, None)
+
+    def test_delete_dyno_nat_gateway(self):
+        """ Verify that a NAT gateway created with a dynamic EIP can be properly deleted """
+        self.subnet.create_nat_gateway()
+        self.existing_subnet['Tags'].append({'Key': DYNO_NAT_TAG_KEY, 'Value': ''})
+
+        self.subnet.delete_nat_gateway()
+
+        self.assertEqual(self.subnet.nat_eip_allocation_id, None)
+        self.assertEqual(self.subnet.nat_gateway, None)
+        self.mock_disco_eip.release.assert_called_once_with(MOCK_PUBLIC_IP)
+        self.mock_ec2_conn.delete_tags.assert_has_calls(
+            [call(Resources=[MOCK_SUBNET_ID], Tags=[{'Key': DYNO_NAT_TAG_KEY}])])
 
     def test_recreate_route_table(self):
         """ Verify a new route table is created to replace an existing one """
@@ -323,3 +371,38 @@ class DiscoSubnetTests(TestCase):
                         if route['DestinationCidrBlock'] == destination_cidr_block and
                         route['GatewayId'] == gateway_id]
         self.assertTrue(route_to_nat)
+
+    def test_upsert_route_to_nat_gateway(self):
+        """ Verify that a new route to a NAT gateway can be created properly """
+        self.subnet.create_nat_gateway(eip_allocation_id=MOCK_ALLOCATION_ID)
+
+        # Calling method under test
+        self.subnet.upsert_route_to_nat_gateway('0.0.0.0/0', MOCK_NAT_GATEWAY_ID)
+
+        # Verification
+        nat_gateway_route = [route for route in self.route_table['Routes']
+                             if route.get('DestinationCidrBlock') == '0.0.0.0/0']
+        self.assertTrue(len(nat_gateway_route) == 1)
+        self.assertEqual(nat_gateway_route[0]['NatGatewayId'], MOCK_NAT_GATEWAY_ID)
+
+    def test_change_to_new_nat_gateway(self):
+        """ Verify that updating NAT gateway with a new EIP can be done properly """
+        self.subnet.create_nat_gateway(eip_allocation_id=MOCK_ALLOCATION_ID)
+        self.subnet.upsert_route_to_nat_gateway('0.0.0.0/0', MOCK_NAT_GATEWAY_ID)
+
+        new_mock_nat_gateway_id = 'new_mock_nat_gateway_id'
+
+        # Calling method under test
+        self.subnet.create_nat_gateway()
+        self.subnet.upsert_route_to_nat_gateway('0.0.0.0/0', new_mock_nat_gateway_id)
+
+        # Verification
+        self.mock_ec2_conn.delete_nat_gateway.assert_called_once_with(NatGatewayId=MOCK_NAT_GATEWAY_ID)
+        expected_create_calls = [call(AllocationId=MOCK_ALLOCATION_ID, SubnetId=MOCK_SUBNET_ID),
+                                 call(AllocationId=MOCK_ALLOCATION_ID, SubnetId=MOCK_SUBNET_ID)]
+        self.mock_ec2_conn.create_nat_gateway.assert_has_calls(expected_create_calls)
+
+        nat_gateway_route = [route for route in self.route_table['Routes']
+                             if route.get('DestinationCidrBlock') == '0.0.0.0/0']
+        self.assertTrue(len(nat_gateway_route) == 1)
+        self.assertEqual(nat_gateway_route[0]['NatGatewayId'], new_mock_nat_gateway_id)

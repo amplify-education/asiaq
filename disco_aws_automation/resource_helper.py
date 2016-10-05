@@ -4,7 +4,7 @@ This module has a bunch of functions about waiting for an AWS resource to become
 import logging
 import time
 
-import botocore
+from botocore.exceptions import ClientError
 from boto.exception import EC2ResponseError, BotoServerError
 
 from .exceptions import (
@@ -33,7 +33,7 @@ def create_filters(filter_dict):
 
 
 def tag2dict(tags):
-    """ Converts a list of AWS tag dicts to a single dict with corresponding keys and values"""
+    """ Converts a list of AWS tag dicts to a single dict with corresponding keys and values """
     return {tag.get('Key'): tag.get('Value') for tag in tags or {}}
 
 
@@ -93,7 +93,7 @@ def throttled_call(fun, *args, **kwargs):
     while True:
         try:
             return fun(*args, **kwargs)
-        except (BotoServerError, botocore.exceptions.ClientError) as err:
+        except (BotoServerError, ClientError) as err:
             if logging.getLogger().level == logging.DEBUG:
                 logger.exception("Failed to run %s.", fun)
 
@@ -143,6 +143,9 @@ def wait_for_state_boto3(describe_func, params_dict, resources_name,
     while True:
         try:
             resources = describe_func(**params_dict)[resources_name]
+            if not isinstance(resources, list):
+                resources = [resources]
+
             all_good = True
             failure = False
             for resource in resources:
@@ -158,7 +161,7 @@ def wait_for_state_boto3(describe_func, params_dict, resources_name,
                     "At least some resources who meet the following description entered either "
                     "'failed' or 'terminated' state after {0}s waiting for state {1}:\n{2}"
                     .format(time_passed, expected_state, params_dict))
-        except EC2ResponseError:
+        except (EC2ResponseError, ClientError):
             pass  # These are most likely transient, we will timeout if they are not
 
         if time_passed >= timeout:

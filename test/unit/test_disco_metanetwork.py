@@ -93,7 +93,7 @@ class DiscoMetaNetworkTests(TestCase):
         mock_allocation_ids = ["allocation_id1", "allocation_id2", "allocation_id3"]
 
         self.meta_network.create()
-        self.meta_network.add_nat_gateways(mock_allocation_ids)
+        self.meta_network.add_nat_gateways(allocation_ids=mock_allocation_ids)
 
         self.assertFalse(self.meta_network.centralized_route_table)
         self.mock_vpc_conn.delete_route_table.assert_called_once_with(MOCK_ROUTE_TABLE.id)
@@ -105,7 +105,29 @@ class DiscoMetaNetworkTests(TestCase):
 
         nat_gateway_calls = []
         for allocation_id in mock_allocation_ids:
-            nat_gateway_calls.append(call(allocation_id))
+            nat_gateway_calls.append(call(eip_allocation_id=allocation_id))
+        mock_create_nat_gateway.assert_has_calls(nat_gateway_calls)
+
+    @patch('disco_aws_automation.disco_subnet.DiscoSubnet.__init__', return_value=None)
+    @patch('disco_aws_automation.disco_subnet.DiscoSubnet.recreate_route_table', return_value=None)
+    @patch('disco_aws_automation.disco_subnet.DiscoSubnet.create_nat_gateway', return_value=None)
+    def test_create_dyno_nat_gateways(self, mock_create_nat_gateway,
+                                      mock_recreate_route_table, mock_subnet_init):
+        """ Verify that NAT gateways are properly created for a meta network using dynamic EIPs"""
+
+        self.meta_network.create()
+        self.meta_network.add_nat_gateways()
+
+        self.assertFalse(self.meta_network.centralized_route_table)
+        self.mock_vpc_conn.delete_route_table.assert_called_once_with(MOCK_ROUTE_TABLE.id)
+
+        recreate_route_table_calls = []
+        nat_gateway_calls = []
+        for _ in range(len(MOCK_ZONES)):
+            recreate_route_table_calls.append(call())
+            nat_gateway_calls.append(call())
+
+        mock_recreate_route_table.assert_has_calls(recreate_route_table_calls)
         mock_create_nat_gateway.assert_has_calls(nat_gateway_calls)
 
     @patch('disco_aws_automation.disco_subnet.DiscoSubnet.__init__', return_value=None)

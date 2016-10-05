@@ -10,6 +10,7 @@ from boto.exception import EC2ResponseError
 from .resource_helper import (
     wait_for_state_boto3, find_or_create, create_filters, throttled_call)
 from .disco_eip import DiscoEIP
+from .disco_subnet import DYNO_NAT_TAG_KEY
 from .exceptions import (TimeoutError, EIPConfigError)
 
 logger = logging.getLogger(__name__)
@@ -207,15 +208,19 @@ class DiscoVPCGateways(object):
         for network in self.disco_vpc.networks.values():
             self._update_nat_gateways(network, dry_run)
 
-        routes_to_delete = list(current_nat_routes - desired_nat_routes)
+        routes_to_delete = current_nat_routes - desired_nat_routes
         logger.info("NAT gateway routes to delete (source, dest): %s", routes_to_delete)
 
-        routes_to_add = list(desired_nat_routes - current_nat_routes)
+        routes_to_add = desired_nat_routes - current_nat_routes
         logger.info("NAT gateway routes to add (source, dest): %s", routes_to_add)
+
+        routes_check_for_update = desired_nat_routes & current_nat_routes
+        logger.info("NAT gateway routes to check for update (source, dest): %s",
+                    routes_check_for_update)
 
         if not dry_run:
             self._delete_nat_gateway_routes([route[0] for route in routes_to_delete])
-            self._add_nat_gateway_routes(routes_to_add)
+            self._upsert_nat_gateway_routes(routes_to_add | routes_check_for_update)
 
     def _update_nat_gateways(self, network, dry_run=False):
         eips = self.disco_vpc.get_config("{0}_nat_gateways".format(network.name))
@@ -226,24 +231,32 @@ class DiscoVPCGateways(object):
             if not dry_run:
                 network.delete_nat_gateways()
         else:
-            eips = [eip.strip() for eip in eips.split(",")]
-            allocation_ids = []
-            for eip in eips:
-                address = self.eip.find_eip_address(eip)
-                if not address:
-                    raise EIPConfigError("Couldn't find Elastic IP: {0}".format(eip))
-
-                allocation_ids.append(address.allocation_id)
-
-            if allocation_ids:
-                logger.info("Setting up NAT gateways in meta network %s using these allocation IDs: %s",
-                            network.name, allocation_ids)
+            if eips.lower() == "auto":
+                logger.info("Setting up NAT gateways in meta network %s using dyno NATs.",
+                            network.name)
                 if not dry_run:
-                    network.add_nat_gateways(allocation_ids)
+                    network.add_nat_gateways()
 
-    def _add_nat_gateway_routes(self, nat_gateway_routes):
+            else:
+                eips = [eip.strip() for eip in eips.split(",")]
+
+                allocation_ids = []
+                for eip in eips:
+                    address = self.eip.find_eip_address(eip)
+                    if not address:
+                        raise EIPConfigError("Couldn't find Elastic IP: {0}".format(eip))
+
+                    allocation_ids.append(address.allocation_id)
+
+                if allocation_ids:
+                    logger.info("Setting up NAT gateways in meta network %s using these allocation IDs: %s",
+                                network.name, allocation_ids)
+                    if not dry_run:
+                        network.add_nat_gateways(allocation_ids=allocation_ids)
+
+    def _upsert_nat_gateway_routes(self, nat_gateway_routes):
         for route in nat_gateway_routes:
-            self.disco_vpc.networks[route[0]].add_nat_gateway_route(self.disco_vpc.networks[route[1]])
+            self.disco_vpc.networks[route[0]].upsert_nat_gateway_route(self.disco_vpc.networks[route[1]])
 
     def _delete_nat_gateway_routes(self, meta_networks):
         for route in meta_networks:
@@ -264,12 +277,33 @@ class DiscoVPCGateways(object):
 
     def destroy_nat_gateways(self):
         """ Find all NAT gateways belonging to a vpc and destroy them"""
-        filter_params = {'Filters': create_filters({'vpc-id': [self.disco_vpc.vpc['VpcId']]})}
+        nat_filter = {'Filters': create_filters({'vpc-id': [self.disco_vpc.vpc['VpcId']]})}
+        nat_gateways = throttled_call(self.boto3_ec2.describe_nat_gateways, **nat_filter)['NatGateways']
 
-        nat_gateways = throttled_call(self.boto3_ec2.describe_nat_gateways, **filter_params)['NatGateways']
         for nat_gateway in nat_gateways:
             throttled_call(self.boto3_ec2.delete_nat_gateway, NatGatewayId=nat_gateway['NatGatewayId'])
 
         # Need to wait for all the NAT gateways to be deleted
-        wait_for_state_boto3(self.boto3_ec2.describe_nat_gateways, filter_params,
+        wait_for_state_boto3(self.boto3_ec2.describe_nat_gateways, nat_filter,
                              'NatGateways', 'deleted', 'State')
+
+        # Release EIPs of dynamically configured subnets
+        subnet_filter = {'Filters': create_filters(
+            {
+                'vpc-id': [self.disco_vpc.vpc['VpcId']],
+                'tag-key': [DYNO_NAT_TAG_KEY]
+            }
+        )}
+        subnet_ids = [
+            sn['SubnetId']
+            for sn in throttled_call(self.boto3_ec2.describe_subnets, **subnet_filter)['Subnets']
+        ]
+        eips = [
+            gw['NatGatewayAddresses'][0]['PublicIp']
+            for gw in nat_gateways
+            if gw['SubnetId'] in subnet_ids
+        ]
+        if eips:
+            logger.info("Releasing temporary NAT EIPs: %s.", " ".join(eips))
+        for eip in eips:
+            self.eip.release(eip)

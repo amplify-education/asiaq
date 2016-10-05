@@ -149,8 +149,8 @@ class DiscoVPCPeerings(object):
                             peering_conn['VpcPeeringConnectionId'], peering)
             else:
                 peering_conn = existing_peerings[0]
-                logging.info("Peering connection %s exists for %s",
-                             existing_peerings[0]['VpcPeeringConnectionId'], peering)
+                logger.info("Peering connection %s exists for %s",
+                            existing_peerings[0]['VpcPeeringConnectionId'], peering)
             DiscoVPCPeerings.create_peering_routes(vpc_map, vpc_metanetwork_map, peering_conn)
 
     @staticmethod

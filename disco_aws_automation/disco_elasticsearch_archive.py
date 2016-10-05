@@ -242,14 +242,19 @@ class DiscoESArchive(object):
         Return list of all the indices, their sizes and their numbers of shards
         sorted by the date from oldest to latest
         """
-        cat_stats = self.es_client.cat.indices(bytes='b', h='index,store.size,pri,rep')
+        cat_stats = self.es_client.cat.indices(bytes='b', h='index,pri,rep,store.size')
         indices_stats = []
         for stats_line in cat_stats.split('\n'):
             if stats_line:
                 stats = stats_line.split()
+
+                # It appears that store.size is not returned when the index is red.
+                # Defaulting the index size to 0 when that happens
+                index_size = int(stats[3]) if len(stats) == 4 else 0
+
                 indices_stats.append({'index': str(stats[0]),
-                                      'size': int(stats[1]),
-                                      'shards': int(stats[2]) * (int(stats[3]) + 1)})
+                                      'size': index_size,
+                                      'shards': int(stats[1]) * (int(stats[2]) + 1)})
 
         dated_index_pattern = re.compile(
             self._index_prefix_pattern + r'-[\d]{4}(\.[\d]{2}){2}$'

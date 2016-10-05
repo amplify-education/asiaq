@@ -3,6 +3,7 @@ Tests of disco_rds
 """
 import unittest
 
+import datetime
 from mock import MagicMock, patch
 
 from disco_aws_automation.disco_rds import RDS, DiscoRDS
@@ -151,7 +152,8 @@ class RDSTests(unittest.TestCase):
 
         self.rds.client.describe_db_snapshots.return_value = {
             'DBSnapshots': [{
-                'DBSnapshotIdentifier': 'foo-snapshot'
+                'DBSnapshotIdentifier': 'foo-snapshot',
+                'SnapshotCreateTime': datetime.datetime(2016, 1, 14)
             }]
         }
         self.rds.client.describe_db_instances.return_value = {
@@ -191,6 +193,38 @@ class RDSTests(unittest.TestCase):
             DBSubnetGroupDescription='Subnet Group for VPC unittestenv',
             DBSubnetGroupName='unittestenv-db-name',
             SubnetIds=['mock_subnet_id'])
+
+    # pylint: disable=unused-argument
+    @patch('disco_aws_automation.disco_vpc.DiscoVPC')
+    @patch('disco_aws_automation.disco_rds.DiscoRoute53')
+    @patch('disco_aws_automation.disco_rds.DiscoS3Bucket', return_value=_get_bucket_mock())
+    def test_clone_uses_latest_snapshot(self, bucket_mock, r53_mock, vpc_mock):
+        self.rds._get_db_instance = MagicMock(return_value=None)
+        self.rds.config_rds = get_mock_config({
+            'some-env-db-name': {
+                'engine': 'oracle',
+                'allocated_storage': '100',
+                'db_instance_class': 'db.m4.2xlarge',
+                'engine_version': '12.1.0.2.v2',
+                'master_username': 'foo'
+            }
+        })
+
+        self.rds.client.describe_db_snapshots.return_value = {
+            'DBSnapshots': [{
+                'DBSnapshotIdentifier': 'foo-snapshot',
+                'SnapshotCreateTime': datetime.datetime(2016, 1, 13)
+            }, {
+                'DBSnapshotIdentifier': 'foo-snapshot2',
+                'SnapshotCreateTime': datetime.datetime(2016, 1, 14)
+            }]
+        }
+
+        self.rds.clone('some-env', 'db-name')
+
+        actual = self.rds.client.restore_db_instance_from_db_snapshot.call_args[1]['DBSnapshotIdentifier']
+
+        self.assertEquals('foo-snapshot2', actual)
 
     # pylint: disable=unused-argument
     @patch('disco_aws_automation.disco_vpc.DiscoVPC')

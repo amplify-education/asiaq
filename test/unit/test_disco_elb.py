@@ -49,7 +49,8 @@ class DiscoELBTests(TestCase):
                     instance_protocol='HTTP', instance_port=80,
                     elb_protocols='HTTP', elb_ports='80',
                     idle_timeout=None, connection_draining_timeout=None,
-                    sticky_app_cookie=None, existing_cookie_policy=None, testing=False):
+                    sticky_app_cookie=None, existing_cookie_policy=None, testing=False,
+                    cross_zone_load_balancing=True):
         sticky_policies = [existing_cookie_policy] if existing_cookie_policy else []
         mock_describe = MagicMock(return_value={'PolicyDescriptions': sticky_policies})
         self.disco_elb.elb_client.describe_load_balancer_policies = mock_describe
@@ -72,7 +73,8 @@ class DiscoELBTests(TestCase):
                 'environment': TEST_ENV_NAME,
                 'hostclass': hostclass,
                 'is_testing': '1' if testing else '0'
-            }
+            },
+            cross_zone_load_balancing=cross_zone_load_balancing
         )
 
     @mock_elb
@@ -244,7 +246,8 @@ class DiscoELBTests(TestCase):
         client.modify_load_balancer_attributes.assert_called_once_with(
             LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
             LoadBalancerAttributes={'ConnectionDraining': {'Enabled': False, 'Timeout': 0},
-                                    'ConnectionSettings': {'IdleTimeout': 100}}
+                                    'ConnectionSettings': {'IdleTimeout': 100},
+                                    'CrossZoneLoadBalancing': {'Enabled': True}}
         )
 
     @mock_elb
@@ -257,7 +260,26 @@ class DiscoELBTests(TestCase):
 
         client.modify_load_balancer_attributes.assert_called_once_with(
             LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
-            LoadBalancerAttributes={'ConnectionDraining': {'Enabled': True, 'Timeout': 100}}
+            LoadBalancerAttributes={
+                'ConnectionDraining': {'Enabled': True, 'Timeout': 100},
+                'CrossZoneLoadBalancing': {'Enabled': True}
+            }
+        )
+
+    @mock_elb
+    def test_get_elb_without_cross_zone_load_balancing(self):
+        """Test creating ELB without cross zone load balancing"""
+        client = self.disco_elb.elb_client
+        client.modify_load_balancer_attributes = MagicMock(wraps=client.modify_load_balancer_attributes)
+
+        self._create_elb(cross_zone_load_balancing=False)
+
+        client.modify_load_balancer_attributes.assert_called_once_with(
+            LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
+            LoadBalancerAttributes={
+                'ConnectionDraining': {'Enabled': False, 'Timeout': 0},
+                'CrossZoneLoadBalancing': {'Enabled': False}
+            }
         )
 
     @mock_elb

@@ -2,6 +2,7 @@
 # http://docs.python.org/2/distutils/setupscript.html#relationships-between-distributions-and-packages
 boto>=2.38.0,<3
 boto3>=1.4.0,<2
+botocore>=1.4.50,<1.5
 docopt>=0.6.1,<1
 passlib>=1.6.1,<2
 pytz>=2014.7

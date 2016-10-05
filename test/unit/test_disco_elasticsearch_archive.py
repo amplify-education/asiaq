@@ -62,7 +62,7 @@ def _create_mock_es_client(indices, indices_health, snapshots, total_bytes):
     es_client.indices = MagicMock()
 
     def _mock_cat_indices(**args):
-        if args != {'h': 'index,store.size,pri,rep', 'bytes': 'b'}:
+        if args != {'h': 'index,pri,rep,store.size', 'bytes': 'b'}:
             raise RuntimeError("Invalid arguments: {0}. This method mocks the indices method of "
                                "elasticsearch.client.CatClient and only returns the name, size "
                                "(in bytes), primary shards and replication factor of the "
@@ -70,8 +70,9 @@ def _create_mock_es_client(indices, indices_health, snapshots, total_bytes):
 
         stats_str = ""
         for index in indices:
-            stats_str += index['index'] + " " + str(index['size']) + " " + \
-                str(index['pri']) + " " + str(index['rep']) + "\n"
+            stats_str += index['index'] + " " + str(index['pri']) + " " + \
+                str(index['rep']) + " " + \
+                (str(index['size']) if index['size'] else "") + "\n"
 
         return stats_str
 
@@ -82,7 +83,7 @@ def _create_mock_es_client(indices, indices_health, snapshots, total_bytes):
         bytes_used = 0
         shards = 0
         for index in indices:
-            bytes_used += index['size']
+            bytes_used += index['size'] if index['size'] else 0
             shards += index['pri'] * (index['rep'] + 1)
 
         return {"nodes": {"fs": {"total_in_bytes": total_bytes,
@@ -128,9 +129,10 @@ class DiscoESArchiveTests(TestCase):
         today = datetime.date.today().strftime('%Y.%m.%d')
         self._indices = [
             {'index': 'foo-2016.06.01', 'size': 1000, 'pri': 5, 'rep': 1},
-            {'index': 'foo-2016.06.02', 'size': 1000, 'pri': 5, 'rep': 1},
+            {'index': 'foo-2016.06.02', 'size': 2000, 'pri': 5, 'rep': 1},
             {'index': 'foo-2016.06.03', 'size': 1000, 'pri': 5, 'rep': 1},
-            {'index': 'foo-2016.06.04', 'size': 1000, 'pri': 5, 'rep': 1},
+            # Adding an index without a size property to simulate a red index
+            {'index': 'foo-2016.06.04', 'size': None, 'pri': 5, 'rep': 1},
             {'index': 'foo-2016.06.05', 'size': 1000, 'pri': 5, 'rep': 1},
             {'index': 'foo-' + today, 'size': 401, 'pri': 5, 'rep': 1}
             # Current used size is 5401, one more than the 0.9 * 6000 (threshold * TOTAL_SIZE)

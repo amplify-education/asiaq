@@ -11,11 +11,12 @@ from ConfigParser import NoOptionError
 
 from dateutil import parser as dateutil_parser
 
-from disco_aws_automation import DiscoAWS, DiscoBake, read_config
+from disco_aws_automation import DiscoAWS, DiscoBake, DiscoSSM, read_config
 from disco_aws_automation.resource_helper import TimeoutError
 from disco_aws_automation.disco_logging import configure_logging
-from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_aws_util import run_gracefully, EasyExit
 from disco_aws_automation.exceptions import SmokeTestError
+import logging
 
 
 # R0912 Allow more than 12 branches so we can parse a lot of commands..
@@ -119,6 +120,7 @@ def get_parser():
     parser_terminate_group.add_argument('--hostclass', dest='hostclasses', default=[],
                                         action='append', type=str)
     parser_terminate_group.add_argument('--ami', dest='amis', default=[], action='append', type=str)
+    parser_terminate_group.add_argument('--asg', dest='asgs', default=[], action='append', type=str)
 
     parser_stop = subparsers.add_parser('stop', help='Stop (aka) shutdown instances')
     parser_stop.set_defaults(mode="stop")
@@ -127,6 +129,7 @@ def get_parser():
     parser_stop_group.add_argument('--hostname', dest='hostnames', default=[], action='append', type=str)
     parser_stop_group.add_argument('--hostclass', dest='hostclasses', default=[], action='append', type=str)
     parser_stop_group.add_argument('--ami', dest='amis', default=[], action='append', type=str)
+    parser_stop_group.add_argument('--asg', dest='asgs', default=[], action='append', type=str)
 
     parser_exec = subparsers.add_parser('exec', help='execute command on instance')
     parser_exec.set_defaults(mode="exec")
@@ -137,6 +140,28 @@ def get_parser():
     parser_exec_group.add_argument('--hostname', dest='hostnames', default=[], action='append', type=str)
     parser_exec_group.add_argument('--hostclass', dest='hostclasses', default=[], action='append', type=str)
     parser_exec_group.add_argument('--ami', dest='amis', default=[], action='append', type=str)
+    parser_exec_group.add_argument('--asg', dest='asgs', default=[], action='append', type=str)
+
+    parser_exec_ssm = subparsers.add_parser('exec-ssm', help='Execute SSM document on instance')
+    parser_exec_ssm.set_defaults(mode="exec-ssm")
+    parser_exec_ssm.add_argument('--document', dest='document', type=str, required=True,
+                                 help='Name of the SSM document to execute')
+    parser_exec_ssm.add_argument('--parameters', dest='parameters', type=str, default=[], action='append',
+                                 help='Parameters to pass to document. Takes the form of "key=value". '
+                                 'Can be passed multiple times')
+    parser_exec_ssm.add_argument('--comment', dest='comment', type=str,
+                                 help='Audit comment describing why this command is being run.')
+    parser_exec_ssm_group = parser_exec_ssm.add_mutually_exclusive_group(required=True)
+    parser_exec_ssm_group.add_argument('--instance', dest='instances', default=[], action='append', type=str,
+                                       help='Instance to run document against. Repeatable.')
+    parser_exec_ssm_group.add_argument('--hostname', dest='hostnames', default=[], action='append', type=str,
+                                       help='Hostname to run document against. Repeatable.')
+    parser_exec_ssm_group.add_argument('--hostclass', dest='hostclasses', default=[], action='append',
+                                       type=str, help='Hostclass to run document against. Repeatable.')
+    parser_exec_ssm_group.add_argument('--ami', dest='amis', default=[], action='append', type=str,
+                                       help='AMI to run document against. Repeatable.')
+    parser_exec_ssm_group.add_argument('--asg', dest='asgs', default=[], action='append', type=str,
+                                       help='Autoscaling group to run document against. Repeatable.')
 
     parser_isready = subparsers.add_parser(
         'isready', help="Checks if instances are ready (i.e instance is sshable and smoke tests passed)")
@@ -149,6 +174,8 @@ def get_parser():
                                 help="instance id of host to check")
     parser_isready.add_argument('--ami', dest='amis', default=[], action='append', type=str,
                                 help="ami of hosts to check")
+    parser_isready.add_argument('--asg', dest='asgs', default=[], action='append', type=str,
+                                help="asg of hosts to check")
 
     parser_tag = subparsers.add_parser('tag', help='Tag a host')
     parser_tag.set_defaults(mode="tag")
@@ -210,6 +237,7 @@ def instances_from_args(disco_aws, args):
     instances.extend(disco_aws.instances_from_hostclasses(args.hostclasses))
     instances.extend(disco_aws.instances_from_amis(args.amis))
     instances.extend([disco_aws.instance_from_hostname(h) for h in args.hostnames])
+    instances.extend(disco_aws.instances_from_asgs(args.asgs))
     return instances
 
 
@@ -224,6 +252,31 @@ def get_preferred_private_ip(instance):
         return interfaces[0].private_ip_address
     else:
         return interfaces[1].private_ip_address
+
+
+def _read_pipeline(pipeline_file):
+    """
+    Open a file with a CSV reader, check it for a couple of required headers, and return its contents
+    as a list of dictionaries.
+    """
+    required = ['hostclass']  # fields that must be present in the headers for the file to be valid
+    with open(pipeline_file, "r") as f:
+        reader = csv.DictReader(f)
+        logging.debug("pipeline headers: %s", reader.fieldnames)
+        for required_field in required:
+            if required_field not in reader.fieldnames:
+                raise EasyExit("Pipeline file %s is missing required header %s (found: %s)" %
+                               (pipeline_file, required_field, reader.fieldnames))
+        hostclass_dicts = [line for line in reader]
+    return hostclass_dicts
+
+
+def parse_ssm_parameters(parameters):
+    # Borrow the AWS CLI syntax of splitting the name of the parameter and it's value on '='
+    keys_to_values = [parameter.split('=', 1) for parameter in parameters]
+    # SSM actually supports multiple values for a given key, but we probably don't need that so let's not
+    # bother with that for now to make this a bit simpler.
+    return {entry[0]: [entry[1]] for entry in keys_to_values}
 
 
 def run():
@@ -316,6 +369,17 @@ def run():
             sys.stdout.write(_stdout)
             exit_code = _code if _code else exit_code
         sys.exit(exit_code)
+    elif args.mode == "exec-ssm":
+        ssm = DiscoSSM(environment_name)
+        if args.parameters:
+            parsed_parameters = parse_ssm_parameters(args.parameters)
+        else:
+            parsed_parameters = None
+        instances = [instance.id for instance in instances_from_args(aws, args)]
+        if ssm.execute(instances, args.document, parameters=parsed_parameters, comment=args.comment):
+            sys.exit(0)
+        else:
+            sys.exit(1)
     elif args.mode == "isready":
         instances = instances_from_args(aws, args)
         if not instances:
@@ -339,20 +403,14 @@ def run():
             if args.value:
                 instance.add_tag(args.key, args.value)
     elif args.mode == "spinup":
-        with open(args.pipeline_definition_file, "r") as f:
-            reader = csv.DictReader(f)
-            hostclass_dicts = [line for line in reader]
+        hostclass_dicts = _read_pipeline(args.pipeline_definition_file)
         aws.spinup(hostclass_dicts, stage=args.stage, no_smoke=args.no_smoke, testing=args.testing)
     elif args.mode == "spindown":
-        with open(args.pipeline_definition_file, "r") as f:
-            reader = csv.DictReader(f)
-            hostclasses = [line["hostclass"] for line in reader]
+        hostclasses = [line["hostclass"] for line in _read_pipeline(args.pipeline_definition_file)]
         aws.spindown(hostclasses)
     elif args.mode == "spindownandup":
-        with open(args.pipeline_definition_file, "r") as f:
-            reader = csv.DictReader(f)
-            hostclass_dicts = [line for line in reader]
-            hostclasses = [d["hostclass"] for d in hostclass_dicts]
+        hostclass_dicts = _read_pipeline(args.pipeline_definition_file)
+        hostclasses = [d["hostclass"] for d in hostclass_dicts]
         aws.spindown(hostclasses)
         aws.spinup(hostclass_dicts)
     elif args.mode == "gethostclassoption":
