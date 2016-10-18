@@ -103,7 +103,7 @@ class DiscoAlarmConfig(object):
             return {key: value}
 
         if self.namespace == 'AWS/ELB':
-            return {'LoadBalancerName': DiscoELB.get_elb_id(self.environment, self.hostclass)}
+            return {'LoadBalancerName': DiscoELB.get_elb_name(self.environment, self.hostclass)}
 
         if self.namespace == 'AWS/ES':
             return {
