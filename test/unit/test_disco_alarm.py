@@ -218,7 +218,7 @@ class DiscoAlarmTests(TestCase):
 
         alarm_configs = disco_alarms_config.get_alarms('mhcbanana')
         self.assertEqual(1, len(alarm_configs))
-        self.assertEquals({'LoadBalancerName': DiscoELB.get_elb_id('testenv', 'mhcbanana')},
+        self.assertEquals({'LoadBalancerName': DiscoELB.get_elb_name('testenv', 'mhcbanana')},
                           alarm_configs[0].dimensions)
 
     def test_get_alarm_config_es_metric(self):
