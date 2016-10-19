@@ -39,7 +39,8 @@ def _get_vpc_mock(random_subnet_mock=None, meta_network_mock=None, boto3_resourc
     # pylint: disable=C0103
     def _create_vpc_mock(CidrBlock):
         return {'Vpc': {'CidrBlock': CidrBlock,
-                        'VpcId': 'mock_vpc_id'}}
+                        'VpcId': 'mock_vpc_id',
+                        'DhcpOptionsId': 'mock_dhcp_options_id'}}
 
     random_subnet_mock.return_value = IPNetwork('10.0.0.0/26')
 

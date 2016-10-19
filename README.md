@@ -19,7 +19,7 @@ Table of Contents
   * [Image management](#image-management)
   * [Logging](#logging)
   * [Network Configuration](#network-configuration)
-  * [EBS Snapshots](#ebs-snapshots)
+  * [Storage](#storage)
   * [Identity and Access Management](#identity-and-access-management)
   * [Monitoring and alerting](#monitoring-and-alerting)
   * [Working with DynamoDB](#working-with-dynamodb)
@@ -1201,7 +1201,7 @@ to instances on boot with DHCP. We expose a smaller subset of these:
 -   `internal_dns` Primary DNS server
 -   `external_dns` Secondary DNS server
 -   `domain_name` The network domain
--   `ntp_server` Address of NTP server.
+-   `ntp_server` Up to four space separated IP addresses or DNS names of NTP servers.
 
 We use AWS resolver by specifying AmazonProvidedDNS for internal_dns
 and external_dns, alternatively the APIPA address 169.254.169.253 can
@@ -1361,11 +1361,66 @@ WARNING! Setting a private IP on an instance will lock it a single
 Availability Zone. This is a limitation of AWS' subnets, they cannot
 span multiple Availability Zones.
 
-EBS Snapshots
--------------
+Storage
+-------
 
-In AWS you almost always want to offload state to an AWS managed service
-there are times when you will want to store state on an EBS volume that
+Images are often baked with small volumes, just enough to install and run
+the OS. This reduces cost on storage. However for machines that maintain
+substantial amount of state often need additional storage. Generally speaking
+it's often best to offload state to a managed services such as EBS
+(for database), ElastiCache (caches), S3 (static data and artifacts),
+ElasticSearch (logs & events). However this is not always possible and for
+this reason asiaq supports several methods of additional local storage.
+
+### Local ephemeral storage
+
+Some AWS instances come with [instance store](http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/InstanceStorage.html).
+Asiaq provides scripts for conveniently and safely mounting these on boot.
+There are few guarantees on long term persistence of these volumes, they do
+not survive reboots or termination. As such, the example script goes a bit
+further to ensure data stored there is irretrievable in case of unsafe /
+unexpected termination by setting up encrypted virtual volumes. The keys to
+these volumes are dynamically generated and discarded on mount. After volume
+is unmounted or machine is rebooted the data will be irretrievable.
+
+An example of how to make use of the sample scripts can be found here:
+`discoroot/etc/init.d/disco-tmp-storage~mhcdiscojenkins`
+while the logic for encrypting
+`discoroot/etc/init.d/disco-storage-functions.sh`
+
+### Enlarging root volume
+
+This method is not recommended, it was implemented first and attaching
+additional volumes is bit more flexible.
+
+Extra_space option can be used to enlarge root volume on boot. To make use
+of the additional space the filesystem needs to be enlarged. This is best
+done at boot and a ext-fs compatible init script is provided in
+sample_configuration, `discoroot/etc/init.d/disco-resize-file-system`.
+
+Parameter must be specified at instance creation, and this can be done
+as command line argument `--extra-space` to `disco_aws.py provision ...`
+or as a extra_space column when spun up via [pipeline definition](#provisioning-a-pipeline).
+
+
+## Attaching additional volumes
+
+Unlike instance storage, EBS volumes can be attached and resized to fit
+the requirements -- without changing instance types. Additional EBS
+volume (asiaq only supports 1 additional volume) can be attached with
+extra_disk option, similar to extra_space its available in both
+`disco_aws.py provision ...` as well as [pipeline definition](#provisioning-a-pipeline).
+
+After instance boots the volume needs to be formatted and mounted.
+
+Unlike extra_space, extra_disk option when combined with snapshoting on
+shutdown will persist across reboot. Making it a more flexible option,
+rendering root volume resizing redundant and obsolete.
+
+
+#### EBS Snapshots
+
+There are times when you will want to store state on an EBS volume that
 is preserved across reboots. This can be done with EBS snapshots. Asiaq
 will automatically link the latest snapshot tagged with a hostclass name
 to the autoscaling group for that hostclass upon autoscaling group

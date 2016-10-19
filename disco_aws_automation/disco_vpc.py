@@ -6,13 +6,15 @@ environments, and between an environment and the internet.  In particular non-VP
 
 import logging
 
+import socket
 import time
 from ConfigParser import ConfigParser
 
 from boto.exception import EC2ResponseError
 import boto3
 
-from netaddr import IPNetwork
+from netaddr import IPNetwork, IPSet, IPAddress
+from netaddr.core import AddrFormatError
 
 from disco_aws_automation.network_helper import calc_subnet_offset, get_random_free_subnet
 from . import normalize_path
@@ -265,45 +267,113 @@ class DiscoVPC(object):
                                    RouteTableId=route_table.id,
                                    DestinationCidrBlock=route.destination_cidr_block)
 
-    def _configure_dhcp(self):
+    def _get_ntp_server_config(self):
+        ntp_servers = []
+        ntp_server_config = self.get_config("ntp_server")
+        if ntp_server_config:
+            for ntp_server in ntp_server_config.split():
+                if self._is_valid_ip(ntp_server):
+                    ntp_servers.append(ntp_server)
+                else:
+                    ntp_server_ip = socket.gethostbyname(ntp_server)
+                    ntp_servers.append(ntp_server_ip)
+        else:
+            ntp_server_metanetwork = self.get_config("ntp_server_metanetwork")
+            ntp_server_offset = self.get_config("ntp_server_offset")
+            if ntp_server_metanetwork and ntp_server_offset:
+                ntp_servers.append(str(
+                    self.networks[ntp_server_metanetwork].ip_by_offset(ntp_server_offset)))
+
+        return ntp_servers if ntp_servers else None
+
+    def _is_valid_ip(self, ip_str):
+        try:
+            IPAddress(ip_str)
+            return True
+        except AddrFormatError:
+            return False
+
+    def _update_dhcp_options(self, dry_run=False):
+        desired_dhcp_options = self._get_dhcp_configs()
+        logger.info("Desired DHCP options: %s", desired_dhcp_options)
+
+        try:
+            existing_dhcp_options = throttled_call(
+                self.boto3_ec2.describe_dhcp_options,
+                DhcpOptionsIds=[self.vpc['DhcpOptionsId']],
+                Filters=[{'Name': 'tag:Name', 'Values': [self.environment_name]}]
+            )['DhcpOptions'][0]['DhcpConfigurations']
+
+        except IndexError:
+            existing_dhcp_options = []
+
+        for option in existing_dhcp_options:
+            option['Values'] = [value['Value'] for value in option['Values']]
+
+        logger.info("Existing DHCP options: %s", existing_dhcp_options)
+
+        if not dry_run and not self._same_dhcp_options(desired_dhcp_options, existing_dhcp_options):
+            created_dhcp_options = self._create_dhcp_options(desired_dhcp_options)
+
+            if existing_dhcp_options:
+                logger.info('Deleting existing DHCP options: %s', self.vpc['DhcpOptionsId'])
+                throttled_call(self.boto3_ec2.delete_dhcp_options,
+                               DhcpOptionsId=self.vpc['DhcpOptionsId'])
+
+            self.vpc['DhcpOptionsId'] = created_dhcp_options['DhcpOptionsId']
+
+    def _same_dhcp_options(self, desired_options, existing_options):
+        desired_optns_dict = dict([(option_dict['Key'], option_dict['Values'])
+                                   for option_dict in desired_options])
+
+        existing_optns_dict = dict([(option_dict['Key'], option_dict['Values'])
+                                    for option_dict in existing_options])
+
+        return desired_optns_dict == existing_optns_dict
+
+    def _get_dhcp_configs(self):
         internal_dns = self.get_config("internal_dns")
         external_dns = self.get_config("external_dns")
         domain_name = self.get_config("domain_name")
-
-        ntp_server = self.get_config("ntp_server")
-        if not ntp_server:
-            ntp_server_metanetwork = self.get_config("ntp_server_metanetwork")
-            ntp_server_offset = self.get_config("ntp_server_offset")
-            ntp_server = str(
-                self.networks[ntp_server_metanetwork].ip_by_offset(ntp_server_offset))
 
         # internal_dns server should be default, and for this reason it comes last.
         dhcp_configs = []
         dhcp_configs.append({"Key": "domain-name", "Values": [domain_name]})
         dhcp_configs.append({"Key": "domain-name-servers", "Values": [internal_dns, external_dns]})
-        dhcp_configs.append({"Key": "ntp-servers", "Values": [ntp_server]})
 
-        dhcp_options = throttled_call(
+        ntp_servers = self._get_ntp_server_config()
+        if ntp_servers:
+            dhcp_configs.append({"Key": "ntp-servers", "Values": ntp_servers})
+
+        return dhcp_configs
+
+    def _create_dhcp_options(self, desired_dhcp_options):
+
+        created_dhcp_options = throttled_call(
             self.boto3_ec2.create_dhcp_options,
-            DhcpConfigurations=dhcp_configs
+            DhcpConfigurations=desired_dhcp_options
         )['DhcpOptions']
 
         keep_trying(
             60,
             self.boto3_ec2.create_tags,
-            Resources=[dhcp_options['DhcpOptionsId']],
+            Resources=[created_dhcp_options['DhcpOptionsId']],
             Tags=[{'Key': 'Name', 'Value': self.environment_name}]
         )
 
-        dhcp_options = throttled_call(
+        created_dhcp_options = throttled_call(
             self.boto3_ec2.describe_dhcp_options,
-            DhcpOptionsIds=[dhcp_options['DhcpOptionsId']]
+            DhcpOptionsIds=[created_dhcp_options['DhcpOptionsId']]
         )['DhcpOptions']
 
-        if len(dhcp_options) == 0:
+        if len(created_dhcp_options) == 0:
             raise RuntimeError("Failed to find DHCP options after creation.")
 
-        return dhcp_options[0]
+        throttled_call(self.boto3_ec2.associate_dhcp_options,
+                       DhcpOptionsId=created_dhcp_options[0]['DhcpOptionsId'],
+                       VpcId=self.vpc['VpcId'])
+
+        return created_dhcp_options[0]
 
     def _create_environment(self):
 
@@ -346,9 +416,7 @@ class DiscoVPC(object):
 
         self._networks = self._create_new_meta_networks()
 
-        dhcp_options = self._configure_dhcp()
-        throttled_call(self.boto3_ec2.associate_dhcp_options, DhcpOptionsId=dhcp_options['DhcpOptionsId'],
-                       VpcId=self.vpc['VpcId'])
+        self._update_dhcp_options()
 
         self.disco_vpc_sg_rules.update_meta_network_sg_rules()
         self.disco_vpc_gateways.update_gateways_and_routes()
@@ -389,6 +457,8 @@ class DiscoVPC(object):
         """ Update the existing VPC """
         # Ignoring changes in CIDR for now at least
 
+        logger.info("Updating DHCP options")
+        self._update_dhcp_options(dry_run)
         logger.info("Updating security group rules...")
         self.disco_vpc_sg_rules.update_meta_network_sg_rules(dry_run)
         logger.info("Updating gateway routes...")

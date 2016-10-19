@@ -632,9 +632,6 @@ class DiscoAWS(object):
               },
             ...]
         """
-
-        self.autoscale.clean_configs()
-
         # If AMI specified lookup hostclass from AMI else lookup AMI from hostclass
         stage = stage if stage else self.vpc.ami_stage()
         bake = DiscoBake(self._config, self.connection)
