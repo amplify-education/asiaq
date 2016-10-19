@@ -183,13 +183,9 @@ class DiscoVPCPeerings(object):
         peering_configs = {}
 
         # get all VPCs created through Asiaq. Ones that have type and Name tags
-        existing_vpcs = throttled_call(
-            client.describe_vpcs,
-            Filters=[{
-                'Name': 'tag-key',
-                'Values': ['type', 'Name']
-            }]
-        ).get('Vpcs', [])
+        existing_vpcs = throttled_call(client.describe_vpcs).get('Vpcs', [])
+        existing_vpcs = [vpc for vpc in existing_vpcs
+                         if all(tag in tag2dict(vpc.get('Tags', [])) for tag in ['type', 'Name'])]
 
         for peering in peerings:
             peering_info = DiscoVPCPeerings.parse_peering_connection_line(peering, existing_vpcs)
