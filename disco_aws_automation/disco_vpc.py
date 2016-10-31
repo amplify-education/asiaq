@@ -5,7 +5,6 @@ environments, and between an environment and the internet.  In particular non-VP
 """
 
 import logging
-import random
 
 import socket
 import time
@@ -17,7 +16,7 @@ import boto3
 from netaddr import IPNetwork, IPSet, IPAddress
 from netaddr.core import AddrFormatError
 
-from disco_aws_automation.network_helper import calc_subnet_offset
+from disco_aws_automation.network_helper import calc_subnet_offset, get_random_free_subnet
 from . import normalize_path
 
 from .disco_alarm import DiscoAlarm
@@ -241,7 +240,7 @@ class DiscoVPC(object):
         for network_name, cidr in networks.iteritems():
             # pick a random ip range if there isn't one configured for the network in the config
             if cidr == 'auto':
-                cidr = DiscoVPC.get_random_free_subnet(self.vpc['CidrBlock'], meta_network_size, used_cidrs)
+                cidr = get_random_free_subnet(self.vpc['CidrBlock'], meta_network_size, used_cidrs)
 
                 if not cidr:
                     raise VPCConfigError("Can't create metanetwork %s. No subnets available", network_name)
@@ -393,7 +392,7 @@ class DiscoVPC(object):
             # get the cidr for all other VPCs so we can avoid overlapping with other VPCs
             occupied_network_cidrs = [vpc['cidr_block'] for vpc in self.list_vpcs()]
 
-            vpc_cidr = DiscoVPC.get_random_free_subnet(ip_space, int(vpc_size), occupied_network_cidrs)
+            vpc_cidr = get_random_free_subnet(ip_space, int(vpc_size), occupied_network_cidrs)
 
             if vpc_cidr is None:
                 raise VPCConfigError('Cannot create VPC %s. No subnets available' % self.environment_name)
@@ -602,26 +601,3 @@ class DiscoVPC(object):
                  'tags': tag2dict(vpc['Tags'] if 'Tags' in vpc else None),
                  'cidr_block': vpc['CidrBlock']}
                 for vpc in vpcs['Vpcs']]
-
-    @staticmethod
-    def get_random_free_subnet(network_cidr, network_size, occupied_network_cidrs):
-        """
-        Pick a random available subnet from a bigger network
-        Args:
-            network_cidr (str): CIDR string describing a network
-            network_size (int): The number of bits for the CIDR of the subnet
-            occupied_network_cidrs (List[str]): List of CIDR strings describing existing networks
-                                                to avoid overlapping with
-
-        Returns str: The CIDR of a randomly chosen subnet that doesn't intersect with
-                     the ip ranges of any of the given other networks
-        """
-        possible_subnets = IPNetwork(network_cidr).subnet(int(network_size))
-        occupied_networks = [IPSet(IPNetwork(cidr)) for cidr in occupied_network_cidrs]
-
-        # find the subnets that don't overlap with any other networks
-        available_subnets = [subnet for subnet in possible_subnets
-                             if all([IPSet(subnet).isdisjoint(occupied_network)
-                                     for occupied_network in occupied_networks])]
-
-        return random.choice(available_subnets) if available_subnets else None

@@ -1250,6 +1250,25 @@ customer has two networks to route via IGW:
 
     dmz_vgw_routes=10.123.0.0/16 1.124.0.0/16
 
+#### VPC Peering
+
+Peering can be configured between VPCs to enable communication between them. 
+The syntax for the peering config is `vpc_name[:vpc_type]/metanetwork vpc_name[:vpc_type]/metanetwork`.
+`vpc_name` can either be the name of an existing VPC or `*` to match any VPC of a certain type. 
+
+For example:
+
+    [peerings]
+    connection_1=example-vpc:sandbox/tunnel ci/intranet
+    connection_2=*:sandbox/tunnel ci/intranet
+    
+The keys for the peering config don't matter except that they must be unique and start with `connection_`
+    
+The `connection_1` configuration will create a peering connection from the `example-vpc` to a vpc named `ci`. 
+Security groups will be updated to allow traffic from `example-vpc`'s tunnel metanetwork to `ci`'s intranet metanetwork.
+    
+The `connection_2` configuration will create peering connections to any VPC of type `sandbox` to `ci`
+
 ### Instance Network Options
 
 #### Instance IP Addresses

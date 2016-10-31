@@ -3,13 +3,14 @@ This module contains logic that processes a VPC's peering connections
 """
 
 import logging
+from itertools import product
 
 from boto.exception import EC2ResponseError
 import boto3
 
 from . import read_config
 from .resource_helper import tag2dict, create_filters, throttled_call
-from .exceptions import VPCPeeringSyntaxError
+from .exceptions import VPCPeeringSyntaxError, VPCConfigError
 # FIXME: Disabling complaint about relative-import. This seems to be the only
 # way that works for unit tests.
 # pylint: disable=W0403
@@ -187,16 +188,23 @@ class DiscoVPCPeerings(object):
 
         client = boto3.client('ec2')
         peering_configs = {}
-        for peering in peerings:
-            peering_config = DiscoVPCPeerings.parse_peering_connection_line(peering, client)
-            vpc_ids_in_peering = [vpc.vpc['VpcId'] for vpc in peering_config.get("vpc_map", {}).values()]
 
-            if len(vpc_ids_in_peering) < 2:
-                pass  # not all vpcs were up, nothing to do
-            elif vpc_id and vpc_id not in vpc_ids_in_peering:
-                logger.debug("Skipping peering %s because it doesn't include %s", peering, vpc_id)
-            else:
-                peering_configs[peering] = peering_config
+        # get all VPCs created through Asiaq. Ones that have type and Name tags
+        existing_vpcs = throttled_call(client.describe_vpcs).get('Vpcs', [])
+        existing_vpcs = [vpc for vpc in existing_vpcs
+                         if all(tag in tag2dict(vpc.get('Tags', [])) for tag in ['type', 'Name'])]
+
+        for peering in peerings:
+            peering_info = DiscoVPCPeerings.parse_peering_connection_line(peering, existing_vpcs)
+            for peering_id, peering_config in peering_info.iteritems():
+                vpc_ids_in_peering = [vpc.vpc['VpcId'] for vpc in peering_config.get("vpc_map", {}).values()]
+
+                if len(vpc_ids_in_peering) < 2:
+                    pass  # not all vpcs were up, nothing to do
+                elif vpc_id and vpc_id not in vpc_ids_in_peering:
+                    logger.debug("Skipping peering %s because it doesn't include %s", peering, vpc_id)
+                else:
+                    peering_configs[peering_id] = peering_config
 
         return peering_configs
 
@@ -256,71 +264,123 @@ class DiscoVPCPeerings(object):
         return peering_strs
 
     @staticmethod
-    def parse_peering_connection_line(line, vpc_conn):
+    # Pylint thinks this function has too many local variables
+    # pylint: disable=R0914
+    def parse_peering_connection_line(line, existing_vpcs):
         """
-        Parses vpc connections of the form `vpc_name[:vpc_type]/metanetwork vpc_name[:vpc_type]/metanetwork`
-        and returns the data in two dictionaries: vpc_name -> DiscoVPC instance and vpc_name -> metanetwork.
-        vpc_type defaults to vpc_name if unspecified.
+        Parse vpc peering config lines and return data for creating the vpc peering connections
+
+        Args:
+            line (str): A vpc peering config line of the form
+                            `vpc_name[:vpc_type]/metanetwork vpc_name[:vpc_type]/metanetwork`
+
+                        `vpc_name` may be the name of a VPC or a `*` wildcard to peer with any VPC of vpc_type
+            existing_vpcs (List[VPC]): A list of Boto VPC dicts for all the existing AWS VPCs
+
+        Returns:
+            data necessary to create peering connections for the VPCs as a dictionary record for each
+            peering connection containing two other dictionaries: vpc_name -> DiscoVPC instance
+            and vpc_name -> metanetwork name
         """
         logger.debug('checking existence for peering %s', line)
         endpoints = line.split(' ')
+        if not len(endpoints) == 2:
+            raise VPCConfigError('Invalid peering config "%s". Peering config must be of the format '
+                                 'vpc_name[:vpc_type]/metanetwork vpc_name[:vpc_type]/metanetwork' % line)
 
-        def get_vpc_name(endpoint):
-            """return name from `name[:type]/metanetwork`"""
-            return endpoint.split('/')[0].split(':')[0].strip()
+        def get_endpoint_info(endpoint):
+            """ Get a dict of peering info from a peering config section """
+            return {
+                # get name from `name[:type]/metanetwork
+                'vpc_name': endpoint.split('/')[0].split(':')[0].strip(),
+                # get type from `name[:type]/metanetwork`, defaulting to name if type is omitted
+                'vpc_type': endpoint.split('/')[0].split(':')[-1].strip(),
+                # get metanetwork from `name[:type]/metanetwork`
+                'metanetwork': endpoint.split('/')[1].strip()
+            }
 
-        def get_vpc_type(endpoint):
-            """return type from `name[:type]/metanetwork`, defaulting to name if type is omitted"""
-            return endpoint.split('/')[0].split(':')[-1].strip()
+        def get_matching_vpcs(vpc_name, vpc_type, existing_vpcs):
+            """return a list of VPC names for VPCs that match the given vpc_name and vpc_type"""
+            vpc_names = []
+            for vpc in existing_vpcs:
+                tags = tag2dict(vpc['Tags'])
+                if vpc_name in ('*', tags['Name']) and vpc_type == tags['type']:
+                    vpc_names.append(tags['Name'])
+            return vpc_names
 
-        def get_metanetwork(endpoint):
-            """return metanetwork from `name[:type]/metanetwork`"""
-            return endpoint.split('/')[1].strip()
+        source_info = get_endpoint_info(endpoints[0])
+        target_info = get_endpoint_info(endpoints[1])
 
-        def safe_get_from_list(_list, i):
-            """returns the i-th element in a list, or None if it doesn't exist"""
-            return _list[i] if _list and len(_list) > i else None
+        if source_info['vpc_type'] == '*' or target_info['vpc_type'] == '*':
+            raise VPCConfigError('Wildcards are not allowed for VPC type in "%s". '
+                                 'Please specify a VPC type when using a wild card for the VPC name' % line)
 
-        vpc_type_map = {
-            get_vpc_name(endpoint): get_vpc_type(endpoint)
-            for endpoint in endpoints
-        }
+        disco_vpc_objects = {}
+        for vpc in existing_vpcs:
+            tags = tag2dict(vpc['Tags'])
+            disco_vpc_objects[tags['Name']] = disco_vpc.DiscoVPC(tags['Name'], tags['type'], vpc)
 
-        vpc_objects = {
-            vpc_name: safe_get_from_list(
-                throttled_call(
-                    vpc_conn.describe_vpcs,
-                    Filters=create_filters({'tag-value': [vpc_name]})
-                )['Vpcs'], 0)
-            for vpc_name in vpc_type_map.keys()
-        }
+        # find the VPCs that match the peering config. Replace wildcards with real VPC names
+        source_vpc_names = get_matching_vpcs(source_info['vpc_name'],
+                                             source_info['vpc_type'],
+                                             existing_vpcs)
+        target_vpc_names = get_matching_vpcs(target_info['vpc_name'],
+                                             target_info['vpc_type'],
+                                             existing_vpcs)
 
-        missing_vpcs = [vpc_name for vpc_name, vpc_object in vpc_objects.items() if not vpc_object]
+        # the source or target side might not have matched any VPCs
+        missing_vpcs = []
+        if not source_vpc_names:
+            missing_vpcs.append('%s:%s' % (source_info['vpc_name'], source_info['vpc_type']))
+        if not target_vpc_names:
+            missing_vpcs.append('%s:%s' % (target_info['vpc_name'], target_info['vpc_type']))
+
         if missing_vpcs:
             logger.debug(
                 "Skipping peering %s because the following VPC(s) are not up: %s",
-                line, ", ".join(map(str, missing_vpcs)))
+                line, ", ".join(missing_vpcs))
             return {}
 
-        vpc_map = {
-            k: disco_vpc.DiscoVPC(k, v, vpc_objects[k])
-            for k, v in vpc_type_map.iteritems()
-        }
+        # peer every combination of source and target VPCs
+        # don't peer a VPC with itself
+        peerings = [peering for peering in product(source_vpc_names, target_vpc_names)
+                    if peering[0] != peering[1]]
 
-        for vpc in vpc_map.values():
-            if not vpc.networks:
-                raise RuntimeError("No metanetworks found for vpc {}. Are you sure it's of type {}?".format(
-                    vpc.environment_name, vpc.environment_type))
+        peering_configs = {}
+        for peering in peerings:
+            source_vpc_name = peering[0]
+            target_vpc_name = peering[1]
+            # create a new peering connection line with all wildcards replaced
+            peering_id = '%s:%s/%s %s:%s/%s' % (
+                source_vpc_name,
+                disco_vpc_objects[source_vpc_name].environment_type,
+                source_info['metanetwork'],
+                target_vpc_name,
+                disco_vpc_objects[target_vpc_name].environment_type,
+                target_info['metanetwork'],
+            )
 
-        vpc_metanetwork_map = {
-            get_vpc_name(endpoint): get_metanetwork(endpoint)
-            for endpoint in endpoints
-        }
+            vpc_map = {
+                source_vpc_name: disco_vpc_objects[source_vpc_name],
+                target_vpc_name: disco_vpc_objects[target_vpc_name]
+            }
 
-        return {
-            'vpc_metanetwork_map': vpc_metanetwork_map,
-            'vpc_map': vpc_map
-        }
+            vpc_metanetwork_map = {
+                source_vpc_name: source_info['metanetwork'],
+                target_vpc_name: target_info['metanetwork']
+            }
+
+            for vpc in vpc_map.values():
+                if not vpc.networks:
+                    raise RuntimeError("No metanetworks found for vpc %s. Are you sure it's of type %s?"
+                                       % (vpc.environment_name, vpc.environment_type))
+
+            peering_configs[peering_id] = {
+                'vpc_map': vpc_map,
+                'vpc_metanetwork_map': vpc_metanetwork_map
+            }
+
+        return peering_configs
 
     @staticmethod
     def delete_peerings(vpc_id=None):

@@ -12,21 +12,6 @@ from test.helpers.patch_disco_aws import get_mock_config
 class DiscoVPCTests(unittest.TestCase):
     """Test DiscoVPC"""
 
-    def test_get_random_free_subnet(self):
-        """Test getting getting a random subnet from a network"""
-        subnet = DiscoVPC.get_random_free_subnet('10.0.0.0/28', 30, [])
-
-        possible_subnets = ['10.0.0.0/30', '10.0.0.4/30', '10.0.0.8/30', '10.0.0.12/30']
-        self.assertIn(str(subnet), possible_subnets)
-
-    def test_get_random_free_subnet_returns_none(self):
-        """Test that None is returned if no subnets are available"""
-        used_subnets = ['10.0.0.0/30', '10.0.0.4/32', '10.0.0.8/30', '10.0.0.12/30']
-
-        subnet = DiscoVPC.get_random_free_subnet('10.0.0.0/28', 30, used_subnets)
-        IPSet(subnet)
-        self.assertIsNone(subnet)
-
     # pylint: disable=unused-argument
     @patch('disco_aws_automation.disco_vpc.DiscoVPCEndpoints')
     @patch('disco_aws_automation.disco_vpc.DiscoVPC.config', new_callable=PropertyMock)

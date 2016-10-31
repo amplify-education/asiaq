@@ -7,9 +7,9 @@ from disco_aws_automation.disco_vpc import DiscoVPC
 from disco_aws_automation.disco_vpc_peerings import DiscoVPCPeerings
 
 from test.helpers.patch_disco_aws import get_mock_config
+from test.helpers.matchers import MatchClass
 
 
-# pylint: disable=unused-argument
 @patch('disco_aws_automation.disco_vpc.DiscoVPC.config', new_callable=PropertyMock)
 @patch('boto3.client')
 def _get_vpc_mock(boto3_client_mock=None, config_mock=None):
@@ -30,43 +30,46 @@ def _get_vpc_mock(boto3_client_mock=None, config_mock=None):
     client_mock.describe_dhcp_options.return_value = {'DhcpOptions': [MagicMock()]}
     boto3_client_mock.return_value = client_mock
 
-    ret = DiscoVPC('mock-vpc-1', 'sandbox',
-                   {'CidrBlock': '10.0.0.0/26', 'VpcId': 'mock_vpc_1_id'})
-    return ret
+    return DiscoVPC('mock-vpc-1', 'sandbox',
+                    {'CidrBlock': '10.0.0.0/26', 'VpcId': 'mock_vpc_1_id'})
 
 
-# pylint: disable=C0103,dangerous-default-value
-def _describe_vpcs_mock(VpcIds=[], Filters=[]):
-    vpc1 = {'Vpcs': [{'VpcId': 'mock_vpc_1_id',
-                      'Tags': [{'Key': 'Name', 'Value': 'mock-vpc-1'},
-                               {'Key': 'type', 'Value': 'sandbox'}]}]}
-    vpc2 = {'Vpcs': [{'VpcId': 'mock_vpc_2_id',
-                      'Tags': [{'Key': 'Name', 'Value': 'mock-vpc-2'},
-                               {'Key': 'type', 'Value': 'sandbox'}]}]}
-    vpc3 = {'Vpcs': [{'VpcId': 'mock_vpc_3_id',
-                      'Tags': [{'Key': 'Name', 'Value': 'mock-vpc-3'},
-                               {'Key': 'type', 'Value': 'sandbox'}]}]}
+# pylint: disable=C0103
+def _describe_vpcs_mock(VpcIds=None, Filters=None):
+    vpcs = [{'VpcId': 'mock_vpc_1_id',
+             'Tags': [{'Key': 'Name', 'Value': 'mock-vpc-1'},
+                      {'Key': 'type', 'Value': 'sandbox'}]},
+            {'VpcId': 'mock_vpc_2_id',
+             'Tags': [{'Key': 'Name', 'Value': 'mock-vpc-2'},
+                      {'Key': 'type', 'Value': 'sandbox'}]},
+            {'VpcId': 'mock_vpc_3_id',
+             'Tags': [{'Key': 'Name', 'Value': 'mock-vpc-3'},
+                      {'Key': 'type', 'Value': 'sandbox'}]}]
+    vpcs_by_name = {
+        vpc['Tags'][0]['Key']: vpc for vpc in vpcs
+    }
+
+    vpcs_by_id = {
+        vpc['VpcId']: vpc for vpc in vpcs
+    }
 
     ret = None
     if Filters:
-        for vpc_filter in Filters:
-            if vpc_filter['Name'] == 'tag-value':
-                if vpc_filter['Values'][0] == 'mock-vpc-1':
-                    ret = vpc1
-                elif vpc_filter['Values'][0] == 'mock-vpc-2':
-                    ret = vpc2
-                elif vpc_filter['Values'][0] == 'mock-vpc-3':
-                    ret = vpc3
+        vpc_filter = Filters[0]
+        if vpc_filter['Name'] == 'tag-value':
+            ret = [vpcs_by_name['vpc_filter']['Values'][0]]
+        if vpc_filter['Name'] == 'tag-key':
+            if set(vpc_filter['Values']) <= set(['Name', 'type']):
+                ret = vpcs
+            else:
+                ret = []
+    elif VpcIds:
+        vpc_id = VpcIds[0]
+        ret = [vpcs_by_id[vpc_id]]
     else:
-        for vpc_id in VpcIds:
-            if vpc_id == 'mock_vpc_1_id':
-                ret = vpc1
-            elif vpc_id == 'mock_vpc_2_id':
-                ret = vpc2
-            elif vpc_id == 'mock_vpc_3_id':
-                ret = vpc3
+        ret = vpcs
 
-    return ret
+    return {'Vpcs': ret}
 
 
 class DiscoVPCPeeringsTests(unittest.TestCase):
@@ -98,6 +101,7 @@ class DiscoVPCPeeringsTests(unittest.TestCase):
         network_1_mock = MagicMock()
         network_2_mock = MagicMock()
 
+        # pylint: disable=unused-argument
         def _mock_meta_network(network, vpc):
             if vpc.vpc['VpcId'] == 'mock_vpc_1_id':
                 return network_1_mock
@@ -165,6 +169,7 @@ class DiscoVPCPeeringsTests(unittest.TestCase):
         network_3_mock.network_cidr = '10.2.123.123/23'
         network_3_mock.name = 'intranet'
 
+        # pylint: disable=unused-argument
         def _mock_meta_network(network, vpc):
             if vpc.vpc['VpcId'] == 'mock_vpc_1_id':
                 return network_1_mock
@@ -212,3 +217,58 @@ class DiscoVPCPeeringsTests(unittest.TestCase):
 
         network_3_mock.create_peering_route.assert_called_once_with(
             'mock_vpc_peering_id_new', str(network_1_mock.network_cidr))
+
+    @patch('disco_aws_automation.disco_vpc.DiscoVPC.config', new_callable=PropertyMock)
+    def test_parse_peering_connection(self, config_mock):
+        """test parsing a simple peering connection line"""
+        config_mock.return_value = get_mock_config({
+            'envtype:sandbox': {
+                'vpc_cidr': '10.0.0.0/16',
+                'intranet_cidr': 'auto'
+            }
+        })
+
+        existing_vpcs = _describe_vpcs_mock()['Vpcs']
+
+        result = DiscoVPCPeerings.parse_peering_connection_line(
+            'mock-vpc-1:sandbox/intranet mock-vpc-2:sandbox/intranet',
+            existing_vpcs)
+
+        peering_info = result['mock-vpc-1:sandbox/intranet mock-vpc-2:sandbox/intranet']
+
+        self.assertEquals(peering_info['vpc_metanetwork_map'],
+                          {'mock-vpc-1': 'intranet', 'mock-vpc-2': 'intranet'})
+        self.assertEquals(peering_info['vpc_map'], {'mock-vpc-1': MatchClass(DiscoVPC),
+                                                    'mock-vpc-2': MatchClass(DiscoVPC)})
+
+    @patch('disco_aws_automation.disco_vpc.DiscoVPC.config', new_callable=PropertyMock)
+    def test_parse_peering_connection_wildcards(self, config_mock):
+        """test parsing a peering connection line with wildcards"""
+        config_mock.return_value = get_mock_config({
+            'envtype:sandbox': {
+                'vpc_cidr': '10.0.0.0/16',
+                'intranet_cidr': 'auto'
+            }
+        })
+
+        existing_vpc = _describe_vpcs_mock()['Vpcs']
+
+        result = DiscoVPCPeerings.parse_peering_connection_line(
+            '*:sandbox/intranet mock-vpc-3:sandbox/intranet',
+            existing_vpc)
+
+        self.assertEquals(2, len(result))
+
+        peering_info1 = result['mock-vpc-1:sandbox/intranet mock-vpc-3:sandbox/intranet']
+
+        self.assertEquals(peering_info1['vpc_metanetwork_map'],
+                          {'mock-vpc-1': 'intranet', 'mock-vpc-3': 'intranet'})
+        self.assertEquals(peering_info1['vpc_map'], {'mock-vpc-1': MatchClass(DiscoVPC),
+                                                     'mock-vpc-3': MatchClass(DiscoVPC)})
+
+        peering_info2 = result['mock-vpc-2:sandbox/intranet mock-vpc-3:sandbox/intranet']
+
+        self.assertEquals(peering_info2['vpc_metanetwork_map'],
+                          {'mock-vpc-2': 'intranet', 'mock-vpc-3': 'intranet'})
+        self.assertEquals(peering_info2['vpc_map'], {'mock-vpc-2': MatchClass(DiscoVPC),
+                                                     'mock-vpc-3': MatchClass(DiscoVPC)})
