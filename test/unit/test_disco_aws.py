@@ -358,7 +358,8 @@ class DiscoAWSTests(TestCase):
                 'hostclass': 'mhcelb',
                 'is_testing': '0'
             },
-            cross_zone_load_balancing=True
+            cross_zone_load_balancing=True,
+            cert_name=None
         )
 
     @patch_disco_aws

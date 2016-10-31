@@ -50,7 +50,7 @@ class DiscoELBTests(TestCase):
                     elb_protocols='HTTP', elb_ports='80',
                     idle_timeout=None, connection_draining_timeout=None,
                     sticky_app_cookie=None, existing_cookie_policy=None, testing=False,
-                    cross_zone_load_balancing=True):
+                    cross_zone_load_balancing=True, cert_name=None):
         sticky_policies = [existing_cookie_policy] if existing_cookie_policy else []
         mock_describe = MagicMock(return_value={'PolicyDescriptions': sticky_policies})
         self.disco_elb.elb_client.describe_load_balancer_policies = mock_describe
@@ -69,6 +69,7 @@ class DiscoELBTests(TestCase):
             sticky_app_cookie=sticky_app_cookie,
             idle_timeout=idle_timeout,
             connection_draining_timeout=connection_draining_timeout,
+            cert_name=cert_name,
             tags={
                 'environment': TEST_ENV_NAME,
                 'hostclass': hostclass,
@@ -182,6 +183,65 @@ class DiscoELBTests(TestCase):
             Subnets=[],
             SecurityGroups=['sec-1'],
             Scheme='internal')
+
+    @mock_elb
+    def test_get_elb_with_tls_and_cert_name(self):
+        """Test creation an ELB with TLS and a specific cert name"""
+        elb_client = self.disco_elb.elb_client
+        elb_client.create_load_balancer = MagicMock(wraps=elb_client.create_load_balancer)
+
+        def _get_certificate_arn(name):
+            if name == 'foo.com':
+                return 'arn:aws:acm::foo:com'
+            else:
+                return TEST_CERTIFICATE_ARN_ACM
+
+        self.acm.get_certificate_arn.side_effect = _get_certificate_arn
+
+        self._create_elb(tls=True, cert_name='foo.com')
+        elb_client.create_load_balancer.assert_called_once_with(
+            LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
+            Listeners=[{
+                'Protocol': 'HTTPS',
+                'LoadBalancerPort': 443,
+                'InstanceProtocol': 'HTTP',
+                'InstancePort': 80,
+                'SSLCertificateId': 'arn:aws:acm::foo:com'
+            }],
+            Subnets=[],
+            SecurityGroups=['sec-1'],
+            Scheme='internal'
+        )
+
+    @mock_elb
+    def test_get_elb_with_tls_and_cert_name_not_found(self):
+        """Test creation an ELB with TLS and a specific cert name that doesn't exist"""
+        elb_client = self.disco_elb.elb_client
+        elb_client.create_load_balancer = MagicMock(wraps=elb_client.create_load_balancer)
+
+        def _get_certificate_arn(name):
+            if name == 'foo.com':
+                return None
+            else:
+                return TEST_CERTIFICATE_ARN_ACM
+
+        self.acm.get_certificate_arn.side_effect = _get_certificate_arn
+        self.iam.get_certificate_arn.return_value = None
+
+        self._create_elb(tls=True, cert_name='foo.com')
+        elb_client.create_load_balancer.assert_called_once_with(
+            LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
+            Listeners=[{
+                'Protocol': 'HTTPS',
+                'LoadBalancerPort': 443,
+                'InstanceProtocol': 'HTTP',
+                'InstancePort': 80,
+                'SSLCertificateId': ''
+            }],
+            Subnets=[],
+            SecurityGroups=['sec-1'],
+            Scheme='internal'
+        )
 
     @mock_elb
     def test_get_elb_with_tcp(self):

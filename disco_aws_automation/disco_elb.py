@@ -166,7 +166,7 @@ class DiscoELB(object):
                           health_check_url, instance_protocol, instance_port,
                           elb_protocols, elb_ports, elb_public, sticky_app_cookie,
                           idle_timeout=None, connection_draining_timeout=None, testing=False, tags=None,
-                          cross_zone_load_balancing=True):
+                          cross_zone_load_balancing=True, cert_name=None):
         """
         Returns an elb.
         This updates an existing elb if it exists, otherwise this creates a new elb.
@@ -190,6 +190,8 @@ class DiscoELB(object):
             testing (bool): True if the ELB will be used for testing purposes only.
             tags (dict): dict of tag names as keys and tag values. Removing tags is not supported
             cross_zone_load_balancing (bool): True if ELB should have load balancing across zones enabled.
+            cert_name (str): The DNS name of a ACM cert or the name of a IAM cert to use.
+                             Ignored if protocol isn't SSL or HTTPS
         """
         cname = self.get_cname(hostclass, hosted_zone_name, testing=testing)
         elb_id = DiscoELB.get_elb_id(self.vpc.environment_name, hostclass, testing=testing)
@@ -215,7 +217,12 @@ class DiscoELB(object):
             for listener in listeners:
                 # Only try to lookup a cert if we are using a secure protocol for the ELB
                 if listener['Protocol'].upper() in ["HTTPS", "SSL"]:
-                    listener['SSLCertificateId'] = self.get_certificate_arn(cname) or ''
+                    # Look up the cert by the provided name or the ELB's CNAME
+                    if cert_name:
+                        cert = self.get_certificate_arn(cert_name)
+                    else:
+                        cert = self.get_certificate_arn(cname)
+                    listener['SSLCertificateId'] = cert or ''
 
             elb_args = {
                 'LoadBalancerName': elb_id,

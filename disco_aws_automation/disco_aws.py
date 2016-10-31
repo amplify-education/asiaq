@@ -323,6 +323,7 @@ class DiscoAWS(object):
                 connection_draining_timeout=int(self.hostclass_option_default(hostclass,
                                                                               "elb_connection_draining",
                                                                               300)),
+                cert_name=self.hostclass_option_default(hostclass, "elb_cert_name"),
                 testing=testing,
                 tags={
                     "hostclass": hostclass,

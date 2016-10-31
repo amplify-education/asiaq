@@ -80,6 +80,37 @@ class DiscoAutoscaleTests(TestCase):
         self.assertEqual(group.max_size, 5)
         self.assertEqual(group.desired_capacity, 4)
 
+    def test_get_group_add_policies(self):
+        """Test getting a group automatically adds scaling policies"""
+        self._autoscale._get_group_generator = MagicMock(return_value=[self.mock_group("mhcdummy")])
+
+        group = self._autoscale.get_group(
+            hostclass="mhcdummy",
+            launch_config="launch_config-X",
+            vpc_zone_id="zone-X",
+        )
+
+        self._mock_boto3_connection.put_scaling_policy.assert_has_calls([
+            call(
+                AutoScalingGroupName=group.name,
+                PolicyName='up',
+                PolicyType='SimpleScaling',
+                AdjustmentType='PercentChangeInCapacity',
+                ScalingAdjustment=10,
+                Cooldown=600,
+                MinAdjustmentMagnitude=1
+            ),
+            call(
+                AutoScalingGroupName=group.name,
+                PolicyName='down',
+                PolicyType='SimpleScaling',
+                AdjustmentType='PercentChangeInCapacity',
+                ScalingAdjustment=-10,
+                Cooldown=600,
+                MinAdjustmentMagnitude=1
+            )
+        ])
+
     def test_get_group_attach_elb(self):
         """Test getting a group and attaching an elb"""
         self._autoscale._get_group_generator = MagicMock(return_value=[self.mock_group("mhcdummy")])
@@ -126,6 +157,150 @@ class DiscoAutoscaleTests(TestCase):
             placement_group=ANY, vpc_zone_identifier=ANY,
             tags=ANY, termination_policies=ANY,
             instance_id=ANY)
+
+    def test_create_policy_simple_scaling(self):
+        '''Test create plicy with simple scaling'''
+        mock_group_name = "mock_group_name"
+        mock_policy_name = "mock_policy_name"
+        mock_adjustment_type = "PercentChangeInCapacity"
+        min_adjustment_magnitude = 1
+        scaling_adjustment = 10
+
+        self._autoscale.create_policy(group_name=mock_group_name,
+                                      policy_name=mock_policy_name,
+                                      adjustment_type=mock_adjustment_type,
+                                      scaling_adjustment=scaling_adjustment,
+                                      min_adjustment_magnitude=min_adjustment_magnitude)
+
+        self._mock_boto3_connection.put_scaling_policy.assert_called_with(
+            AdjustmentType=mock_adjustment_type,
+            AutoScalingGroupName=mock_group_name,
+            Cooldown=600, MinAdjustmentMagnitude=min_adjustment_magnitude,
+            PolicyName=mock_policy_name,
+            PolicyType='SimpleScaling', ScalingAdjustment=scaling_adjustment)
+
+    def test_create_policy_step_scaling(self):
+        '''Test create plicy with step scaling'''
+        mock_group_name = "mock_group_name"
+        mock_policy_name = "mock_policy_name"
+        mock_adjustment_type = "mock_adjustment_type"
+        step_scaling = "StepScaling"
+        scaling_adjustment = 10
+        metric_aggregation_type = "Maximum"
+        step_adjustments = [{'MetricIntervalLowerBound': 25,
+                             'MetricIntervalUpperBound': 75,
+                             'ScalingAdjustment': 30}]
+        estimated_instance_warmup = 123
+
+        self._autoscale.create_policy(group_name=mock_group_name,
+                                      policy_name=mock_policy_name,
+                                      policy_type=step_scaling,
+                                      adjustment_type=mock_adjustment_type,
+                                      scaling_adjustment=scaling_adjustment,
+                                      metric_aggregation_type=metric_aggregation_type,
+                                      step_adjustments=step_adjustments,
+                                      estimated_instance_warmup=estimated_instance_warmup)
+
+        self._mock_boto3_connection.put_scaling_policy.assert_called_with(
+            AdjustmentType=mock_adjustment_type,
+            AutoScalingGroupName=mock_group_name,
+            EstimatedInstanceWarmup=estimated_instance_warmup,
+            MetricAggregationType=metric_aggregation_type,
+            PolicyName=mock_policy_name,
+            PolicyType=step_scaling,
+            StepAdjustments=step_adjustments)
+
+    def test_create_policy_invalid_args(self):
+        '''Test error is raised due to invalid arguments'''
+        # Scaling adjustment must be passed in for simple scaling
+        with self.assertRaises(TypeError):
+            self._autoscale.create_policy(group_name="mock_group_name",
+                                          policy_name="mock_policy_name",
+                                          policy_type="SimpleScaling")
+
+        # Min adjustment magnitude must be passed in if PercentChangeInCapacity is used
+        with self.assertRaises(TypeError):
+            self._autoscale.create_policy(group_name="mock_group_name",
+                                          policy_name="mock_policy_name",
+                                          adjustment_type="PercentChangeInCapacity",
+                                          policy_type="SimpleScaling")
+
+    def test_list_policies(self):
+        '''Test listing ploicies'''
+        group_name = "mock_group_name"
+        policy_types = ["mock_policy_type"]
+        policy_names = ["mock_policy_name"]
+        next_token = "mock_token"
+        mock_policies = [{'AutoScalingGroupName': self.environment_name + 'ASG_name_1',
+                          'PolicyName': 'policy_name_1',
+                          'PolicyType': 'policy_type_1',
+                          'AdjustmentType': 'adjustment_type_1',
+                          'ScalingAdjustment': 'scaling_adjustment_1',
+                          'StepAdjustments': [{'mock_step': 'mock_step_1'}],
+                          'MinAdjustmentMagnitude': 1,
+                          'Cooldown': 200,
+                          'EstimatedInstanceWarmup': 333,
+                          'Alarms': ['mock_alarm_1']},
+                         {'AutoScalingGroupName': self.environment_name + 'ASG_name_2',
+                          'PolicyName': 'policy_name_2',
+                          'PolicyType': 'policy_type_2',
+                          'AdjustmentType': 'adjustment_type_2',
+                          'ScalingAdjustment': 'scaling_adjustment_2',
+                          'StepAdjustments': [{'mock_step': 'mock_step_2'}],
+                          'MinAdjustmentMagnitude': 2,
+                          'Cooldown': 400,
+                          'EstimatedInstanceWarmup': 666,
+                          'Alarms': ['mock_alarm_2']}]
+
+        shared_vars = {'next_token': next_token}
+
+        def _mock_describe_policies(**args):
+            if shared_vars['next_token']:
+                temp_token = shared_vars['next_token']
+                shared_vars['next_token'] = None
+                return {'ScalingPolicies': [mock_policies[0]],
+                        'NextToken': temp_token}
+            else:
+                return {'ScalingPolicies': [mock_policies[1]]}
+
+        self._mock_boto3_connection.describe_policies.side_effect = _mock_describe_policies
+
+        # Calling method under test
+        policies = self._autoscale.list_policies(group_name=group_name,
+                                                 policy_types=policy_types,
+                                                 policy_names=policy_names)
+
+        # Verifying results
+        expected_policies = [{'Warmup': mock_policies[0]['EstimatedInstanceWarmup'],
+                              'Cooldown': mock_policies[0]['Cooldown'],
+                              'ASG': mock_policies[0]['AutoScalingGroupName'],
+                              'Name': mock_policies[0]['PolicyName'],
+                              'Step Adjustments': mock_policies[0]['StepAdjustments'],
+                              'Alarms': mock_policies[0]['Alarms'],
+                              'Adjustment Type': mock_policies[0]['AdjustmentType'],
+                              'Min Adjustment': mock_policies[0]['MinAdjustmentMagnitude'],
+                              'Type': mock_policies[0]['PolicyType'],
+                              'Scaling Adjustment': mock_policies[0]['ScalingAdjustment']},
+                             {'Warmup': mock_policies[1]['EstimatedInstanceWarmup'],
+                              'Cooldown': mock_policies[1]['Cooldown'],
+                              'ASG': mock_policies[1]['AutoScalingGroupName'],
+                              'Name': mock_policies[1]['PolicyName'],
+                              'Step Adjustments': mock_policies[1]['StepAdjustments'],
+                              'Alarms': mock_policies[1]['Alarms'],
+                              'Adjustment Type': mock_policies[1]['AdjustmentType'],
+                              'Min Adjustment': mock_policies[1]['MinAdjustmentMagnitude'],
+                              'Type': mock_policies[1]['PolicyType'],
+                              'Scaling Adjustment': mock_policies[1]['ScalingAdjustment']}]
+        self.assertEqual(expected_policies, policies)
+
+        expected_calls = [call(AutoScalingGroupName=group_name,
+                               PolicyNames=policy_names,
+                               PolicyTypes=policy_types),
+                          call(AutoScalingGroupName=group_name,
+                               NextToken=next_token,
+                               PolicyNames=policy_names,
+                               PolicyTypes=policy_types)]
+        self._mock_boto3_connection.describe_policies.assert_has_calls(expected_calls)
 
     @patch("boto.ec2.autoscale.group.AutoScalingGroup")
     def test_get_fresh_group_with_none_desired(self, mock_group_init):

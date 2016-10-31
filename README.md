@@ -1873,6 +1873,7 @@ Options:
 -   `elb_idle_timeout` [Default=300] Timeout before ELB kills idle connections
 -   `elb_connection_draining` [Default=300] The timeout, in seconds, for requests to unhealthy or de-registering instances to complete before instance is removed from ELB
 -   `elb_cross_zone_load_balancing` [Default=True] If true, the ELB will evenly distribute load across instances regardless of their AZs. If false, the ELB will evenly distribute load across AZs regardless of number of instances in each AZ.
+-   `elb_cert_name` [Optional] ELBs will use HTTPS certs by looking them up by the ELB's CNAME. Use this option to force the ELB to use a cert for a different domain
 
 ### Commands for managing ELB
 List all ELBs in the environment

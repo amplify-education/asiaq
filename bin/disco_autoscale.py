@@ -7,6 +7,8 @@ from __future__ import print_function
 import argparse
 import sys
 
+from collections import defaultdict
+
 from disco_aws_automation import DiscoAutoscale, read_config
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.disco_logging import configure_logging
@@ -54,15 +56,84 @@ def parse_arguments():
 
     parser_list_policies = subparsers.add_parser('listpolicies', help='List all autoscaling policies')
     parser_list_policies.set_defaults(mode="listpolicies")
+    parser_list_policies.add_argument(
+        "--group-name",
+        help='Name of the autoscaling group'
+    )
+    parser_list_policies.add_argument(
+        "--policy-names",
+        action='append',
+        help='Name of the autoscaling policy, or it\'s ARN'
+    )
+    parser_list_policies.add_argument(
+        "--policy-types",
+        choices=['SimpleScaling', 'StepScaling'],
+        action='append',
+        help='Type of scaling policies to list.'
+    )
 
     parser_create_policy = subparsers.add_parser('createpolicy', help='Create autoscaling policy')
     parser_create_policy.set_defaults(mode="createpolicy")
-    parser_create_policy.add_argument("--policy_name", required=True, help='Name of autoscaling policy')
-    parser_create_policy.add_argument("--group_name", required=True, help='Name of autoscaling group')
-    parser_create_policy.add_argument("--adjustment", required=True,
-                                      help='By how many instances to adjust capacity (can be negative)')
-    parser_create_policy.add_argument("--cooldown", default=120, required=False,
-                                      help='Cooldown (sec) before policy can trigger again (default: 120)')
+    parser_create_policy.add_argument(
+        "--group-name",
+        required=True,
+        help='Name of autoscaling group'
+    )
+    parser_create_policy.add_argument(
+        "--policy-name",
+        required=True,
+        help='Name of autoscaling policy'
+    )
+    parser_create_policy.add_argument(
+        "--policy-type",
+        required=True,
+        choices=['SimpleScaling', 'StepScaling'],
+        default='SimpleScaling',
+        help='Which scaling type to use?'
+    )
+    parser_create_policy.add_argument(
+        "--adjustment-type",
+        required=True,
+        choices=['ChangeInCapacity', 'ExactCapacity', 'PercentChangeInCapacity'],
+        help='How should the scaling adjustment be interpreted?'
+    )
+    parser_create_policy.add_argument(
+        "--scaling-adjustment",
+        type=int,
+        help='By how much should the ASG be modified? Can be a positive or negative integer. Used with '
+        'SimpleScaling.'
+    )
+    parser_create_policy.add_argument(
+        "--min-adjustment-magnitude",
+        type=int,
+        help='When `--adjustment-type` is "PercentChangeInCapacity", what is the minimum number of instances '
+        'that should be modified?'
+    )
+    parser_create_policy.add_argument(
+        "--metric-aggregation-type",
+        choices=['Average', 'Minimum', 'Maximum'],
+        help='What is the aggregation type of the metric feeding this policy? Used with StepScaling.'
+    )
+    parser_create_policy.add_argument(
+        "--step-adjustments",
+        action='append',
+        help='The steps by which to adjust the autoscaling group. Used with StepScaling. Repeatable. '
+        'Format: MetricIntervalLowerBound=<float>,MetricIntervalUpperBound=<float>,ScalingAdjustment=<int> '
+        'Example: MetricIntervalLowerBound=34.0,MetricIntervalUpperBound=45.8,ScalingAdjustment=5'
+    )
+    parser_create_policy.add_argument(
+        "--cooldown",
+        default=600,
+        type=int,
+        help='Cooldown (sec) before policy can trigger again. Used with SimpleScaling (default: %(default)s)'
+    )
+    parser_create_policy.add_argument(
+        "--estimated-instance-warmup",
+        default=300,
+        type=int,
+        help='Estimated time (sec) for an instance to boot and begin serving traffic. Used with StepScaling. '
+        '(default: %(default)s)'
+    )
 
     parser_delete_policy = subparsers.add_parser('deletepolicy', help='Delete autoscaling policy')
     parser_delete_policy.set_defaults(mode="deletepolicy")
@@ -116,15 +187,97 @@ def run():
 
     # Scaling policy commands
     elif args.mode == "listpolicies":
-        policies = autoscale.list_policies()
-        for policy in policies:
-            print("{0:30} {1}".format(policy.name, policy.policy_arn))
+        policies = autoscale.list_policies(
+            group_name=args.group_name,
+            policy_types=args.policy_types,
+            policy_names=args.policy_names
+        )
+        print_table(
+            policies,
+            headers=[
+                'ASG',
+                'Name',
+                'Type',
+                'Adjustment Type',
+                'Scaling Adjustment',
+                'Min Adjustment',
+                'Cooldown',
+                'Step Adjustments',
+                'Warmup',
+                'Alarms'
+            ]
+        )
     elif args.mode == "createpolicy":
-        autoscale.create_policy(args.policy_name, args.group_name, args.adjustment, args.cooldown)
+        # Parse out the step adjustments, if provided.
+        if args.step_adjustments:
+            allowed_keys = ['MetricIntervalLowerBound', 'MetricIntervalUpperBound', 'ScalingAdjustment']
+            parsed_steps = []
+            for step in args.step_adjustments:
+                parsed_step = {}
+                for entry in step.split(','):
+                    key, value = entry.split('=', 1)
+                    if key not in allowed_keys:
+                        raise Exception(
+                            'Unable to parse step {0}, key {1} not in {2}'.format(step, key, allowed_keys)
+                        )
+                    parsed_step[key] = value
+                parsed_steps.append(parsed_step)
+        else:
+            parsed_steps = []
+
+        autoscale.create_policy(
+            group_name=args.group_name,
+            policy_name=args.policy_name,
+            policy_type=args.policy_type,
+            adjustment_type=args.adjustment_type,
+            min_adjustment_magnitude=args.min_adjustment_magnitude,
+            scaling_adjustment=args.scaling_adjustment,
+            cooldown=args.cooldown,
+            metric_aggregation_type=args.metric_aggregation_type,
+            step_adjustments=parsed_steps,
+            estimated_instance_warmup=args.estimated_instance_warmup
+        )
     elif args.mode == "deletepolicy":
         autoscale.delete_policy(args.policy_name, args.group_name)
 
     sys.exit(0)
+
+
+def print_table(rows, headers=None, space_between_columns=4):
+    """
+    Convenience method for printing a list of dictionary objects into a table. Automatically sizes the
+    columns to be the maximum size of any entry in the dictionary, and adds additional buffer whitespace.
+
+    Params:
+        rows -                  A list of dictionaries representing a table of information, where keys are the
+                                headers of the table. Ex. { 'Name': 'John', 'Age': 23 }
+
+        headers -               A list of the headers to print for the table. Must be a subset of the keys of
+                                the dictionaries that compose the row. If a header isn't present or it's value
+                                has a falsey value, the value printed is '-'.
+
+        space_between_columns - The amount of space between the columns of text. Defaults to 4.
+    """
+    columns_to_sizing = defaultdict(int)
+    format_string = ''
+
+    headers = headers or rows[0].keys()
+
+    for row in rows:
+        for header in headers:
+            value = row.get(header, '-')
+            columns_to_sizing[header] = max(len(str(value)), columns_to_sizing[header])
+
+    for header in headers:
+        column_size = max(columns_to_sizing[header], len(header)) + space_between_columns
+        format_string += '{' + header + ':<' + str(column_size) + '}'
+
+    print(format_string.format(**{key: key for key in headers}), file=sys.stderr)
+
+    for row in rows:
+        defaulted_row = {header: row.get(header) or '-' for header in headers}
+        print(format_string.format(**defaulted_row))
+
 
 if __name__ == "__main__":
     run_gracefully(run)
