@@ -10,10 +10,11 @@ Variables:
      <host>                 A hostname/hostclass/instance substring
 
 Options:
-     -h --help              Show this screen
-     --debug                Log in debug level
-     --env ENV              Environment to operate in
-     --first                In case of multiple matching instances, connect to the first instead of failing
+     -h --help                  Show this screen
+     --debug                    Log in debug level
+     --env ENV                  Environment to operate in
+     --first                    In case of multiple matching instances, connect to the first instead of failing
+     --tunnel LPORT:HOST:RPORT  Establish a secure connection between a local port and a port on a remote host   
 """
 
 import logging
@@ -43,6 +44,7 @@ class DiscoSSH(object):
         self.env = self.args["--env"] or self.config.get("disco_aws", "default_environment")
         self.pick_instance = self.args['--first']
         configure_logging(args["--debug"])
+        self.tunnel = self.args["--tunnel"]
 
     def is_ip(self, string):
         """Returns True if the given string is an IPv4 address"""
@@ -133,9 +135,18 @@ class DiscoSSH(object):
         """
         Given a list of ip addresses, build an ssh command to tunnel through n-1 ips to reach the n-th ip
         """
-        command = " ".join([
-            "ssh -At {} {}".format(SSH_OPTIONS, ip)
-            for ip in ips])
+        if self.tunnel:
+            if len(ips) > 1:
+                raise EasyExit("No direct path found; cannot tunnel through multiple hosts")
+
+            command = " ".join([
+                "ssh -At {} -L {} {}".format(SSH_OPTIONS, self.tunnel, ip)
+                for ip in ips])
+
+        else:
+            command = " ".join([
+                "ssh -At {} {}".format(SSH_OPTIONS, ip)
+                for ip in ips])
         return command
 
     def run(self):
