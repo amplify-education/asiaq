@@ -134,8 +134,8 @@ class DiscoSSH(object):
     def expand_tunnel(self, tunnel):
         """
         Expands the host specified in the tunnel string if necessary.  If the hostname provided is
-        not a full url, it is assumed to be a database name, and a full url is constructed from the
-        database name based on the environment.
+        not a full url, it is checked to see if it's a database name or a hostclass name, and if so
+        a full url is constructed from the short name based on the environment.
         """
         lport, host, rport = tunnel.split(":")
 
