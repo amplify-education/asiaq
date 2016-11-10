@@ -140,7 +140,10 @@ class DiscoSSH(object):
         lport, host, rport = tunnel.split(":")
 
         if "." not in host:
-            host = self.env + "-" + host + ".aws.wgen.net"
+            if host.startswith("mhc"):
+                host = host + "-" + self.env + ".aws.wgen.net"
+            elif host.endswith("db"):
+                host = self.env + "-" + host + ".aws.wgen.net"
 
         return lport + ":" + host + ":" + rport
 
