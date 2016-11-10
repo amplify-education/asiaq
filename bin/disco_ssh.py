@@ -10,11 +10,11 @@ Variables:
      <host>                 A hostname/hostclass/instance substring
 
 Options:
-     -h --help                  Show this screen
-     --debug                    Log in debug level
-     --env ENV                  Environment to operate in
-     --first                    In case of multiple matching instances, connect to the first instead of failing
-     --tunnel LPORT:HOST:RPORT  Establish a secure connection between a local port and a port on a remote host   
+     -h --help              Show this screen
+     --debug                Log in debug level
+     --env ENV              Environment to operate in
+     --first                In case of multiple matching instances, connect to the first instead of failing
+     --tunnel PRT:HOST:PRT  Establish a secure connection between a local port and a port on a remote host
 """
 
 import logging
