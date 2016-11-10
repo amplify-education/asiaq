@@ -5,7 +5,17 @@ module Pip
       error("pip failed") unless ok
     end
     # actually run the command
-    sh "pip install #{opts}" do |ok, status|
+    args = []
+    if Project[:INDEX_URL] then
+      args += ["--index-url", Project[:INDEX_URL]]
+    end
+    if Project[:PYNEST_URL] then
+      args += ["--find-links", Project[:PYNEST_URL]]
+    end
+
+    argstr = args.join(" ")
+
+    sh "pip install #{argstr} #{opts}" do |ok, status|
       error("pip failed") unless ok
     end
   end

@@ -1,8 +1,10 @@
 require 'tmpdir'
 
 module Setup
+  ROOT_SRC_DIR = (defined? Project::ROOT_SRC_DIR) ? Project::ROOT_SRC_DIR : "."
+
   def self.setup(cmd)
-    sh "python setup.py #{cmd}"
+    sh "cd  #{ROOT_SRC_DIR}; python setup.py #{cmd}"
   end
 
   def self.get_package_version
@@ -36,24 +38,20 @@ namespace "setup" do
   desc "Install the egg in development mode"
   task :develop => ["install_deps"] do
     notice("Installing egg in development mode")
-    Pip.install "-e ."
+    Pip.install "-e #{Setup::ROOT_SRC_DIR}"
     Setup.setup "develop"
     notice("Egg installed in development mode.")
     print Setup.installed_versions
   end
 
-  desc "Publish the egg to the Pynest"
-  task :pynest => ["virtualenv:verify", "version:inject_git"] do
-    notice("Publishing to pynest")
-    require_env('PYNEST', ' - this is needed to publish the egg to the pynest directory')
-    nest_dir = ENV['PYNEST']
-
-    publish_files_to(nest_dir) do |tmpdir|
+  desc "Publish the egg to the index (set INDEX_URL in your environment to override the default target)"
+  task :pynest => ["virtualenv:verify", "version:inject_git", "version:inject_build_number"] do
+    publish_files_to(Project[:INDEX_URL]) do |tmpdir|
       Setup.setup %|sdist -d "#{tmpdir}"|
     end
 
     version = Setup.get_package_version
-    good("Published egg version #{version} to pynest #{nest_dir}")
+    good("Published egg version #{version} to index #{Project[:INDEX_URL]}")
   end
 end
 

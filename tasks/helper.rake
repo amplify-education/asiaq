@@ -167,7 +167,7 @@ module EnvInfo
 
   def require_env(varname, message)
     if ! ENV[varname] then
-      error("#{varname} is not set. " + message)
+      error("#{varname} is not set" + message)
     end
   end
 end
@@ -207,6 +207,7 @@ end
 module PublishFiles
   include FileUtils
   SCP_REGEX = /[^\/]+\@[^\/]+\:.*/
+  HTTP_REGEX = /^https?.*/
   #
   # Creates a temporary dir, passing the location to the given block.
   # When the block is complete, copies the contents of the temporary dir
@@ -221,6 +222,23 @@ module PublishFiles
         # http://rors.org/2008/10/26/dont-escape-in-strings
         sh %|scp "#{tmpdir}"/* #{destination}| do |ok, res|
           error("Failed to upload to destination: #{destination}") unless ok
+        end
+      elsif HTTP_REGEX =~ destination
+        # Assume this is a devpi index so use the devpi client
+        args = "--index-url #{Project[:INDEX_URL]}"
+        sh %|pip install #{args} "devpi-client>=2.5.0,<3"| do |ok, res|
+          error("Couldn't install devpi client") unless ok
+        end
+        sh %|devpi use #{destination}| do |ok, res|
+          error("Couldn't select devpi index: #{destination}") unless ok
+        end
+        sh %|devpi login #{Project[:DEVPI_USER]} --password #{Project[:DEVPI_PASSWORD]}| do |ok, res|
+          error("Couldn't login to devpi as #{Project[:DEVPI_USER]}") unless ok
+        end
+        Dir.glob("#{tmpdir}/*") do |filename|
+          sh %|devpi upload #{filename}| do |ok, res|
+            error("Couldn't upload #{File.basename(filename)} to devpi index #{destination}") unless ok
+          end
         end
       else
         # This funny invocation is apparently the recommended way to copy the entire

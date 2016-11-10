@@ -127,8 +127,17 @@ namespace "test" do
   desc "Create test reports directory"
   task :mkdir => [ProjectPaths::REPORTS_DIR]
 
+  desc "Prepare test environment"
+  task :prepenv => ["setup:develop", "test:install", :mkdir]
+
+  # Split integration testing into 2 steps, prep and run so that, in AWS,
+  # prep can be done in phase 2 when external access to dependencies is still
+  # available as opposed to test runtime in the upper environments.
+  desc "Prepare and run integration tests"
+  task :integration => [:prepenv, :run_integration]
+
   desc "Run integration tests"
-  task :integration => ["setup:develop", "test:install", :mkdir] do
+  task :run_integration do
     # integration tests require some pre-existing AWS state such as credentials S3 buckets and IAM permissions,
     # so we'll need to work with real-project config files instead of the sample_config files
     require_env('ASIAQ_CONFIG', 'Set ASIAQ_CONFIG to the directory containing Asiaq configuration files')
@@ -145,21 +154,25 @@ namespace "test" do
   end
 
   desc "Run functional tests"
-  task :functional => ["setup:develop", "test:install", :mkdir] do
+  task :functional => [:prepenv] do
     notice("Running functional tests")
     if Project[:IS_COMPONENT] then
       ok = Nose.nosetests(Nose::FUNCTIONAL_TEST_DIR) do |line|
         puts line
       end
-      error("Functional tests failed") unless ok
+      if(!ok)
+        error("Functional tests failed") 
+        exit 1
+      end
       good("Functional tests passed, sweet!")
+      exit 0
     else
       notice("Egg is not a component, so skipping functional tests")
     end
   end
 
   desc "Run system tests"
-  task :system => ["setup:develop", "test:install", :mkdir] do
+  task :system => [:prepenv] do
     notice("Running system tests")
     if Project[:IS_COMPONENT] then
       ok = Nose.nosetests(Nose::SYSTEM_TEST_DIR) do |line|
@@ -173,7 +186,7 @@ namespace "test" do
   end
 
   desc "Run unit tests"
-  task :unit => ["setup:develop", "test:install", :mkdir] do
+  task :unit => [:prepenv] do
     notice("Running unit tests")
     #
     # We want to write to stdout and a file at the same time, AND
@@ -195,7 +208,7 @@ namespace "test" do
   task :cover => [:mkdir] do
     notice("Checking code coverage")
     total_coverage = Nose.read_coverage["TOTAL"]
-    ok = total_coverage >= 30
+    ok = total_coverage >= 65
     error("Coverage failed - only #{total_coverage}%. Time to write more tests.") unless ok
     good("Unit test code coverage is #{total_coverage}% - it'll do!")
   end
