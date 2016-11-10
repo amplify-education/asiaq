@@ -44,7 +44,7 @@ class DiscoSSH(object):
         self.env = self.args["--env"] or self.config.get("disco_aws", "default_environment")
         self.pick_instance = self.args['--first']
         configure_logging(args["--debug"])
-        self.tunnel = self.args["--tunnel"]
+        self.tunnel = self.expand_tunnel(self.args["--tunnel"])
 
     def is_ip(self, string):
         """Returns True if the given string is an IPv4 address"""
@@ -130,6 +130,19 @@ class DiscoSSH(object):
             raise EasyExit("No direct route to host and no jump host in {}".format(self.env))
 
         return [jump_host_ip, instance.private_ip_address]
+
+    def expand_tunnel(self, tunnel):
+        """
+        Expands the host specified in the tunnel string if necessary.  If the hostname provided is
+        not a full url, it is assumed to be a database name, and a full url is constructed from the
+        database name based on the environment.
+        """
+        lport, host, rport = tunnel.split(":")
+
+        if "." not in host:
+            host = self.env + "-" + host + ".aws.wgen.net"
+
+        return lport + ":" + host + ":" + rport
 
     def build_ssh_cmd(self, ips):
         """
