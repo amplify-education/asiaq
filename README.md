@@ -23,7 +23,7 @@ Table of Contents
   * [Identity and Access Management](#identity-and-access-management)
   * [Monitoring and alerting](#monitoring-and-alerting)
   * [Working with DynamoDB](#working-with-dynamodb)
-  * [LBExternal](#lbexternal)
+  * [Lbexternal](#lbexternal)
   * [Elastic Load Balancing](#elastic-load-balancing)
   * [Route53](#route53)
   * [Chaos](#chaos)
