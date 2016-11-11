@@ -1833,7 +1833,7 @@ Create a file in discoroot/etc/synapse.d/ directory using the following format:
 
     servicename.json~mhclbexternal  (for example banana.json~mhclbexternal)
 
-Create a zookeeper discovery directive, an acl rule and a health check:
+In that file create a zookeeper discovery directive, an acl rule and a health check:
 
     {
       "discovery": {
