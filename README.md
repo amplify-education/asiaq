@@ -23,6 +23,7 @@ Table of Contents
   * [Identity and Access Management](#identity-and-access-management)
   * [Monitoring and alerting](#monitoring-and-alerting)
   * [Working with DynamoDB](#working-with-dynamodb)
+  * [LBExternal](#lbexternal)
   * [Elastic Load Balancing](#elastic-load-balancing)
   * [Route53](#route53)
   * [Chaos](#chaos)
@@ -1820,6 +1821,39 @@ a list of properties that need/can be included in the table definition, please g
 To delete a DynamoDB table:
 
     disco_dynamodb.py delete --table Notices
+
+Lbexternal
+----------
+
+Lbexternal is a hostclass that runs haproxy acting as a Load Balancer/Traffic Director handling requests to the web application. In general, HAProxy extracting data from request streams and based on the [acl](http://cbonte.github.io/haproxy-dconv/1.6/configuration.html#7) rules directing the traffic to the desired backend host. 
+
+### Configuration
+
+Create a file in discoroot/etc/synapse.d/ directory using the following format: 
+
+    servicename.json~mhclbexternal  (for example banana.json~mhclbexternal)
+
+Create a zookeeper discovery directive, an acl rule and a health check:
+
+    {
+      "discovery": {
+        "method": "zookeeper",
+        "path": "/nerve/services/banana/services",
+        "hosts": $ZK_HOSTS
+      },
+      "haproxy": {
+        "shared_frontend": [
+          "acl is_banana path_beg /banana/",
+          "use_backend banana if is_banana"
+        ],
+        "server_options": "check inter 2000 rise 3 fall 2",
+        "listen": [
+          "mode http",
+          "option httplog",
+          "option httpchk /banana/heartbeat/lb"
+        ]
+      }
+    }
 
 Elastic Load Balancing
 -----------------------
