@@ -14,7 +14,7 @@ Options:
      --debug                Log in debug level
      --env ENV              Environment to operate in
      --first                In case of multiple matching instances, connect to the first instead of failing
-     --tunnel PRT:HOST:PRT  Establish a secure connection between a local port and a port on a remote host
+     --tunnel LPORT:RPORT   Establish a secure connection between a local port and a remote port on the host
 """
 
 import logging
@@ -44,7 +44,7 @@ class DiscoSSH(object):
         self.env = self.args["--env"] or self.config.get("disco_aws", "default_environment")
         self.pick_instance = self.args['--first']
         configure_logging(args["--debug"])
-        self.tunnel = self.expand_tunnel(self.args["--tunnel"])
+        self.tunnel = self.args["--tunnel"]
 
     def is_ip(self, string):
         """Returns True if the given string is an IPv4 address"""
@@ -131,33 +131,15 @@ class DiscoSSH(object):
 
         return [jump_host_ip, instance.private_ip_address]
 
-    def expand_tunnel(self, tunnel):
-        """
-        Expands the host specified in the tunnel string if necessary.  If the hostname provided is
-        not a full url, it is checked to see if it's a database name or a hostclass name, and if so
-        a full url is constructed from the short name based on the environment.
-        """
-        lport, host, rport = tunnel.split(":")
-
-        if "." not in host:
-            if host.startswith("mhc"):
-                host = host + "-" + self.env + ".aws.wgen.net"
-            elif host.endswith("db"):
-                host = self.env + "-" + host + ".aws.wgen.net"
-
-        return lport + ":" + host + ":" + rport
-
     def build_ssh_cmd(self, ips):
         """
         Given a list of ip addresses, build an ssh command to tunnel through n-1 ips to reach the n-th ip
         """
         if self.tunnel:
-            if len(ips) > 1:
-                raise EasyExit("No direct path found; cannot tunnel through multiple hosts")
+            lport, rport = self.tunnel.split(":")
+            host = self.args["<host>"]
 
-            command = " ".join([
-                "ssh -At {} -L {} {}".format(SSH_OPTIONS, self.tunnel, ip)
-                for ip in ips])
+            command = "ssh -At {} -fNL {}:{}:{} {}".format(SSH_OPTIONS, lport, host, rport, ips[0])
 
         else:
             command = " ".join([
@@ -169,7 +151,15 @@ class DiscoSSH(object):
         """Parses command line and dispatches the commands"""
         host = self.args["<host>"]
 
-        ips = self.detect_best_route(host)
+        if self.tunnel:
+            jump_host_ip = self.aws().find_jump_address()
+            if not jump_host_ip:
+                raise EasyExit("No jump host in {}".format(self.env))
+            ips = [jump_host_ip]
+
+        else:    
+            ips = self.detect_best_route(host)
+
         cmd = self.build_ssh_cmd(ips)
         logger.info("Now ssh-ing: %s", cmd)
         os.system(cmd)
