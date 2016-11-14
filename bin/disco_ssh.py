@@ -157,7 +157,7 @@ class DiscoSSH(object):
                 raise EasyExit("No jump host in {}".format(self.env))
             ips = [jump_host_ip]
 
-        else:    
+        else:
             ips = self.detect_best_route(host)
 
         cmd = self.build_ssh_cmd(ips)
