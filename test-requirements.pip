@@ -8,5 +8,5 @@ nose-cov>=1.5,<2
 mock>=1.0.1,<2
 coverage<4
 # Additional libraries
-moto>=0.4.25
+moto>=0.4.30
 six>=1.7.3
