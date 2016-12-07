@@ -12,6 +12,8 @@ from . import DiscoVPC, DiscoAWS
 from .disco_aws_util import read_pipeline_file, graceful
 from .disco_logging import configure_logging
 from .disco_config import read_config, normalize_path
+from .disco_dynamodb import AsiaqDynamoDbBackupManager
+from .disco_datapipeline import AsiaqDataPipelineManager
 from .exceptions import AsiaqConfigError
 
 
@@ -103,7 +105,91 @@ class SandboxCommand(CliCommand):
             s3_bucket.upload_file(local_config_path, remote_config_path)
 
 
+class DynamoDbBackupCommand(CliCommand):
+    """
+    CliCommand implementation for managing DynamoDB backups and backup pipelines.
+    """
+    DESCRIPTION = "Manage dynamodb backups and the pipelines that create them."
+
+    @classmethod
+    def init_args(cls, parser):
+        subsub = parser.add_subparsers(title="data pipeline commands", dest="dp_command")
+        subsub.add_parser("init", help="Set up bucket for backup and log data.")
+        backup_parser = subsub.add_parser("backup",
+                                          help="Configure backup for a dynamodb table")
+        backup_parser.add_argument("table_name")
+        restore_parser = subsub.add_parser("restore", help="Restore a dynamodb table from backup")
+        restore_parser.add_argument("table_name")
+        restore_parser.add_argument("--from", dest="backup_dir",
+                                    help="Previous backup to restore from (default: latest)")
+        list_parser = subsub.add_parser("list", help="List existing backups")
+        list_parser.add_argument("table_name")
+
+    def run(self):
+        dispatch = {
+            'init': self._create_bucket,
+            'list': self._list,
+            'backup': self._create_backup,
+            'restore': self._restore_backup,
+        }
+        mgr = AsiaqDynamoDbBackupManager(config=self.config)
+        dispatch[self.args.dp_command](mgr)
+
+    def _create_bucket(self, mgr):
+        mgr.init_bucket()
+
+    def _restore_backup(self, mgr):
+        mgr.restore_backup(self.args.table_name, self.args.backup_dir)
+
+    def _create_backup(self, mgr):
+        mgr.create_backup(self.args.table_name)
+
+    def _list(self, mgr):
+        backups = mgr.list_backups(self.config.environment, self.args.table_name)
+        for backup in backups:
+            print backup
+
+
+class DataPipelineCommand(CliCommand):
+    """
+    CliCommand implementation for managing data pipelines (excessively entangled with dyanmodb)
+    """
+    DESCRIPTION = "Inspect and manage data pipelines."
+
+    @classmethod
+    def init_args(cls, parser):
+        subsub = parser.add_subparsers(title="data pipeline commands", dest="dp_command")
+        list_parser = subsub.add_parser("list", help="List available pipelines")
+        list_parser.add_argument("--pipeline-name", dest="search_name", help="Find pipelines with this name.")
+        list_parser.add_argument("--all-envs", dest="ignore_env", action='store_const', const=True)
+        delete_parser = subsub.add_parser("delete", help="Delete an existing pipeline")
+        delete_parser.add_argument("pipeline_id", help="AWS ID of the pipeline to delete")
+
+    def run(self):
+        mgr = AsiaqDataPipelineManager()
+        dispatch = {
+            'list': self._search,
+            'delete': self._delete
+        }
+        dispatch[self.args.dp_command](mgr)
+
+    def _search(self, mgr):
+        tags = {}
+        if not self.args.ignore_env:
+            tags['environment'] = self.config.environment
+        found = mgr.search_descriptions(name=self.args.search_name, tags=tags)
+        for record in found:
+            print "%s\t%s\t%s" % (record._id, record._name, record._description or "")
+
+    def _delete(self, mgr):
+        pipeline = mgr.fetch(self.args.pipeline_id)
+        self.logger.info("Deleting pipeline %s", pipeline._name)
+        mgr.delete(pipeline)
+
+
 SUBCOMMANDS = {
+    "dp": DataPipelineCommand,
+    "ddb_backup": DynamoDbBackupCommand,
     "sandbox": SandboxCommand
 }
 

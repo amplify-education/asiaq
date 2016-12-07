@@ -1,0 +1,85 @@
+{
+    "metadata": {
+        "templateName": "Import DynamoDB backup data from S3 (MapReduce job)",
+        "templateDescription": "This template schedules an Amazon Elastic MapReduce (EMR) cluster to load a previously created DynamoDB backup in Amazon S3 to a DynamoDB table. Existing items in the DynamoDB table will be updated with those from the backup data and new items will be added to the table.  This has been modified from the original template to run on demand instead of daily."
+    },
+    "objects": [
+        {
+            "id": "Default",
+            "name": "Default",
+            "scheduleType": "ondemand",
+            "failureAndRerunMode": "CASCADE",
+            "role": "DataPipelineDefaultRole",
+            "resourceRole": "DataPipelineDefaultResourceRole"
+        },
+        {
+            "id": "DDBDestinationTable",
+            "tableName": "#{myDDBTableName}",
+            "name": "DDBDestinationTable",
+            "type": "DynamoDBDataNode",
+            "writeThroughputPercent": "#{myDDBWriteThroughputRatio}"
+        },
+        {
+            "name": "S3InputDataNode",
+            "id": "S3InputDataNode",
+            "type": "S3DataNode",
+            "directoryPath": "#{myInputS3Loc}"
+        },
+        {
+            "id": "EmrClusterForLoad",
+            "name": "EmrClusterForLoad",
+            "amiVersion": "3.9.0",
+            "masterInstanceType": "m3.xlarge",
+            "coreInstanceType": "m3.xlarge",
+            "coreInstanceCount": "1",
+            "region": "#{myDDBRegion}",
+             "bootstrapAction" : ["s3://#{myDDBRegion}.elasticmapreduce/bootstrap-actions/configure-hadoop, --mapred-key-value,mapreduce.map.speculative=false"],
+            "type": "EmrCluster"
+        },
+        {
+            "id": "TableLoadActivity",
+            "name": "TableLoadActivity",
+            "runsOn": {
+                "ref": "EmrClusterForLoad"
+            },
+            "input": {
+                "ref": "S3InputDataNode"
+            },
+            "output": {
+                "ref": "DDBDestinationTable"
+            },
+            "type": "EmrActivity",
+            "maximumRetries": "2",
+            "resizeClusterBeforeRunning": "true",
+            "step": [
+                "s3://dynamodb-emr-#{myDDBRegion}/emr-ddb-storage-handler/2.1.0/emr-ddb-2.1.0.jar,org.apache.hadoop.dynamodb.tools.DynamoDbImport,#{input.directoryPath},#{output.tableName},#{output.writeThroughputPercent}"
+            ]
+        }
+    ],
+    "parameters": [
+        {
+            "id": "myDDBRegion",
+            "type": "String",
+            "description": "Region of the DynamoDB table",
+            "default": "us-east-1",
+            "watermark": "us-east-1"
+        },
+        {
+            "id": "myDDBTableName",
+            "type": "String",
+            "description": "Target DynamoDB table name"
+        },
+        {
+            "id": "myDDBWriteThroughputRatio",
+            "type": "Double",
+            "description": "DynamoDB write throughput ratio",
+            "default": "0.25",
+            "watermark": "Enter value between 0.1-1.0"
+        },
+        {
+            "id": "myInputS3Loc",
+            "type": "AWS::S3::ObjectKey",
+            "description": "Input S3 folder"
+        }
+    ]
+}

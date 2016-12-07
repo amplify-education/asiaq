@@ -1,0 +1,95 @@
+{
+    "metadata": {
+        "templateName": "Export DynamoDB table to S3 (Map Reduce job)",
+        "templateDescription": "This template schedules an Amazon Elastic MapReduce (EMR) cluster to export data from a DynamoDB table to an Amazon S3 folder. The files are stored in timestamped YYYY-MM-dd-HH-mm-ss subfolders in the DynamoDB export format on each scheduled day of execution."
+    },
+    "objects": [
+        {
+            "startAt": "FIRST_ACTIVATION_DATE_TIME",
+            "name": "DailySchedule",
+            "id": "DailySchedule",
+            "period": "1 day",
+            "type": "Schedule"
+        },
+        {
+            "id": "Default",
+            "name": "Default",
+            "scheduleType": "CRON",
+            "schedule": {
+                "ref": "DailySchedule"
+            },
+            "failureAndRerunMode": "CASCADE",
+            "role": "DataPipelineDefaultRole",
+            "resourceRole": "DataPipelineDefaultResourceRole"
+        },
+        {
+            "id": "DDBSourceTable",
+            "tableName": "#{myDDBTableName}",
+            "name": "DDBSourceTable",
+            "type": "DynamoDBDataNode",
+            "readThroughputPercent": "#{myDDBReadThroughputRatio}"
+        },
+        {
+            "name": "S3BackupLocation",
+            "id": "S3BackupLocation",
+            "type": "S3DataNode",
+            "directoryPath": "#{myOutputS3Loc}/#{format(@scheduledStartTime, 'YYYY-MM-dd-HH-mm-ss')}"
+        },
+        {
+            "id": "EmrClusterForBackup",
+            "name": "EmrClusterForBackup",
+            "amiVersion": "3.9.0",
+            "masterInstanceType": "m3.xlarge",
+            "coreInstanceType": "m3.xlarge",
+            "coreInstanceCount": "1",
+            "region": "#{myDDBRegion}",
+            "bootstrapAction" : ["s3://#{myDDBRegion}.elasticmapreduce/bootstrap-actions/configure-hadoop, --yarn-key-value,yarn.nodemanager.resource.memory-mb=11520,--yarn-key-value,yarn.scheduler.maximum-allocation-mb=11520,--yarn-key-value,yarn.scheduler.minimum-allocation-mb=1440,--yarn-key-value,yarn.app.mapreduce.am.resource.mb=2880,--mapred-key-value,mapreduce.map.memory.mb=5760,--mapred-key-value,mapreduce.map.java.opts=-Xmx4608M,--mapred-key-value,mapreduce.reduce.memory.mb=2880,--mapred-key-value,mapreduce.reduce.java.opts=-Xmx2304m,--mapred-key-value,mapreduce.map.speculative=false"],
+            "type": "EmrCluster"
+        },
+        {
+            "id": "TableBackupActivity",
+            "name": "TableBackupActivity",
+            "input": {
+                "ref": "DDBSourceTable"
+            },
+            "output": {
+                "ref": "S3BackupLocation"
+            },
+            "runsOn": {
+                "ref": "EmrClusterForBackup"
+            },
+            "resizeClusterBeforeRunning": "true",
+            "type": "EmrActivity",
+            "maximumRetries": "2",
+            "step": [
+                "s3://dynamodb-emr-#{myDDBRegion}/emr-ddb-storage-handler/2.1.0/emr-ddb-2.1.0.jar,org.apache.hadoop.dynamodb.tools.DynamoDbExport,#{output.directoryPath},#{input.tableName},#{input.readThroughputPercent}"
+            ]
+        }
+    ],
+    "parameters": [
+        {
+            "id": "myDDBRegion",
+            "type": "String",
+            "description": "Region of the DynamoDB table",
+            "default": "us-east-1",
+            "watermark": "us-east-1"
+        },
+        {
+            "id": "myDDBTableName",
+            "type": "String",
+            "description": "Source DynamoDB table name"
+        },
+        {
+            "id": "myDDBReadThroughputRatio",
+            "type": "Double",
+            "description": "DynamoDB read throughput ratio",
+            "default": "0.25",
+            "watermark": "Enter value between 0.1-1.0"
+        },
+        {
+            "id": "myOutputS3Loc",
+            "type": "AWS::S3::ObjectKey",
+            "description": "Output S3 folder"
+        }
+    ]
+}
