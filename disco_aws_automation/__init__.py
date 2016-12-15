@@ -1,37 +1,5 @@
 ''' For package documentation, see README '''
 
-from os import getenv
-from os.path import join, exists
-from ConfigParser import ConfigParser
-
-
-ASIAQ_CONFIG = getenv("ASIAQ_CONFIG", ".")
-DEFAULT_CONFIG_FILE = "disco_aws.ini"
-
-
-def read_config(config_file=DEFAULT_CONFIG_FILE):
-    """
-    Normalize and read in a config file (defaulting to "disco_aws.ini").
-    """
-    real_config_file = normalize_path(config_file)
-    config = ConfigParser()
-    config.read(real_config_file)
-    return config
-
-
-def normalize_path(path):
-    """
-    If ASIAQ_CONFIG is set prepend it to path, otherwise just return path.
-    """
-    normalized_path = join(ASIAQ_CONFIG, path)
-    if exists(normalized_path):
-        return normalized_path
-    else:
-        raise RuntimeError("Config path not found: %s" % normalized_path)
-
-
-# The following imports are at the bottom to avoid a circular import when importing read_config
-# pylint: disable=wrong-import-position
 from .disco_acm import DiscoACM
 from .disco_autoscale import DiscoAutoscale
 from .disco_aws import DiscoAWS

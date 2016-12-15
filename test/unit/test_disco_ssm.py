@@ -127,7 +127,13 @@ def mock_boto3_client(arg):
                 return {'Document': {'Name': Name, 'Status': 'Active'}}
 
     def _mock_send_command(InstanceIds, DocumentName, Comment=None, Parameters=None, OutputS3BucketName=None):
-        mock_command = create_mock_command(InstanceIds, DocumentName, Comment, Parameters, OutputS3BucketName)
+        mock_command = _create_mock_command(
+            InstanceIds,
+            DocumentName,
+            Comment,
+            Parameters,
+            OutputS3BucketName
+        )
         return {"Command": mock_command}
 
     def _mock_list_commands(CommandId):
@@ -141,6 +147,9 @@ def mock_boto3_client(arg):
         return {"Commands": filtered_mock_commands}
 
     def _mock_list_command_invocations(CommandId, Details):
+        if not Details:
+            raise Exception("This mock method always expects details, so not wanting them is unsupported.")
+
         filtered_mock_command_invocations = []
 
         for command_invocation in MOCK_COMMAND_INVOCATIONS:
@@ -162,7 +171,7 @@ def mock_boto3_client(arg):
     return mock_ssm
 
 
-def combine_stdout_and_stderr(stdout=None, stderr=None):
+def _combine_stdout_and_stderr(stdout=None, stderr=None):
     if stdout is None and stderr is None:
         return ''
     elif stdout is not None and stderr is None:
@@ -171,8 +180,8 @@ def combine_stdout_and_stderr(stdout=None, stderr=None):
         return SSM_OUTPUT_ERROR_DELIMITER.join([stdout or '', stderr or ''])
 
 
-def create_mock_command(instance_ids, document_name, comment=None, parameters=None,
-                        output_s3_bucket_name=None, status='Success', stdout='stdout', stderr='stderr'):
+def _create_mock_command(instance_ids, document_name, comment=None, parameters=None,
+                         output_s3_bucket_name=None, status='Success', stdout='stdout', stderr='stderr'):
     command_id = ''.join(random.choice("0123456789abcdefghijklmnopqrstuvxyz-") for _ in range(40))
 
     mock_command = {
@@ -199,7 +208,7 @@ def create_mock_command(instance_ids, document_name, comment=None, parameters=No
                     "Status": status,
                     "Name": 'foo-plugin',
                     "ResponseCode": 0,
-                    "Output": combine_stdout_and_stderr(stdout, stderr)
+                    "Output": _combine_stdout_and_stderr(stdout, stderr)
                 }
             ],
             "InstanceId": instance_id,
@@ -251,6 +260,8 @@ def create_mock_s3_bucket(invocations, stdout, stderr):
             key_to_data[stderr_key] = stderr
             keys.append(stderr_key)
 
+    # Lambda seems like a decent solution here...
+    # pylint: disable=unnecessary-lambda
     mock_s3_bucket.listkeys.side_effect = lambda prefix_keys: [key for key in keys
                                                                if key.startswith(prefix_keys)]
     mock_s3_bucket.get_key.side_effect = lambda key: key_to_data.get(key)
@@ -454,7 +465,7 @@ class DiscoSSMTests(TestCase):
     def test_get_output_from_s3_bucket(self):
         """Verify that we get the correct output from an S3 bucket"""
         instance_ids = ['i-1', 'i-2']
-        mock_command = create_mock_command(
+        mock_command = _create_mock_command(
             instance_ids=instance_ids,
             document_name='foo-doc',
             output_s3_bucket_name='foo-bucket'
@@ -476,7 +487,7 @@ class DiscoSSMTests(TestCase):
     def test_get_output_from_s3_bucket_with_no_stdout(self):
         """Verify that we get the correct output from an S3 bucket with no stdout"""
         instance_ids = ['i-1', 'i-2']
-        mock_command = create_mock_command(
+        mock_command = _create_mock_command(
             instance_ids=instance_ids,
             document_name='foo-doc',
             output_s3_bucket_name='foo-bucket',
@@ -499,7 +510,7 @@ class DiscoSSMTests(TestCase):
     def test_get_output_from_s3_bucket_with_no_stderr(self):
         """Verify that we get the correct output from an S3 bucket with no stderr"""
         instance_ids = ['i-1', 'i-2']
-        mock_command = create_mock_command(
+        mock_command = _create_mock_command(
             instance_ids=instance_ids,
             document_name='foo-doc',
             output_s3_bucket_name='foo-bucket',
@@ -522,7 +533,7 @@ class DiscoSSMTests(TestCase):
     def test_get_output_from_ssm(self):
         """Verify that we get the correct output from the SSM service"""
         instance_ids = ['i-1', 'i-2']
-        mock_command = create_mock_command(
+        mock_command = _create_mock_command(
             instance_ids=instance_ids,
             document_name='foo-doc'
         )
@@ -540,7 +551,7 @@ class DiscoSSMTests(TestCase):
     def test_get_output_from_ssm_bucket_with_no_stdout(self):
         """Verify that we get the correct output from SSM with no stdout"""
         instance_ids = ['i-1', 'i-2']
-        mock_command = create_mock_command(
+        mock_command = _create_mock_command(
             instance_ids=instance_ids,
             document_name='foo-doc',
             stdout=None
@@ -559,7 +570,7 @@ class DiscoSSMTests(TestCase):
     def test_get_output_from_ssm_bucket_with_no_stderr(self):
         """Verify that we get the correct output from SSM with no stderr"""
         instance_ids = ['i-1', 'i-2']
-        mock_command = create_mock_command(
+        mock_command = _create_mock_command(
             instance_ids=instance_ids,
             document_name='foo-doc',
             stderr=None

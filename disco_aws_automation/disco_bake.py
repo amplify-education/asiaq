@@ -17,7 +17,7 @@ import boto.exception
 import dateutil.parser
 from pytz import UTC
 
-from . import normalize_path, read_config
+from .disco_config import normalize_path, read_config
 from .resource_helper import wait_for_sshable, keep_trying, wait_for_state
 from .disco_storage import DiscoStorage
 from .disco_remote_exec import DiscoRemoteExec, SSH_DEFAULT_OPTIONS
@@ -419,8 +419,6 @@ class DiscoBake(object):
             wait_for_state(image, u'available',
                            int(self.hc_option_default(hostclass, "ami_available_wait_time", "600")))
             logger.info("Created %s AMI %s", image_name, image_id)
-        except EarlyExitException as early_exit:
-            logger.info(str(early_exit))
         except:
             logger.exception("Snap shot failed. See trace below.")
             raise
@@ -663,9 +661,10 @@ class DiscoBake(object):
         stage, state, and hostclass.
         """
         filtered_amis = []
+        stages = stage.split(',') if stage else None
         for ami in amis:
             filters = [
-                not stage or ami.tags.get("stage", None) == stage,
+                not stages or ami.tags.get("stage", None) in stages,
                 not product_line or ami.tags.get("productline", None) == product_line,
                 not state or ami.state == state,
                 not hostclass or self.ami_hostclass(ami) == hostclass]
@@ -688,9 +687,35 @@ class DiscoBake(object):
             amis = self.get_amis(filters=filters)
             logger.debug("AMI search for %s found %s", filters, amis)
             amis = self.ami_filter(amis, stage, product_line)
-            return max(amis, key=self.ami_timestamp) if amis else None
+            stages = [val.strip() for val in stage.split(",")] if stage else []
+            return self._latest_best_stage_ami(stages, amis)
         else:
             raise ValueError("Must specify either hostclass or AMI")
+
+    def _latest_best_stage_ami(self, stages, amis):
+        """
+        Find the latest AMI of the earliest stage in the list that has AMIs.
+
+        If the list of AMIs is empty, return None; if input is bull, returns the horns.
+        """
+        if not amis:  # avoid a bunch of bounds-checking
+            return None
+        stage_priority = {stage: index for index, stage in enumerate(stages)}
+
+        def _get_priority(ami):  # because apparently it's not OK to assign a lambda (<eyeroll>)
+            return stage_priority.get(ami.tags.get("stage"), 100000000)
+
+        found_ami = amis[0]
+        for ami in amis[1:]:
+            ami_priority = _get_priority(ami)
+            found_priority = _get_priority(found_ami)
+            if ami_priority > found_priority:
+                # this AMI has a less-good stage than the already-found one
+                continue
+            if ami_priority < found_priority or self.ami_timestamp(ami) > self.ami_timestamp(found_ami):
+                # this has a better stage, or the same stage and a better timestamp
+                found_ami = ami
+        return found_ami
 
     @staticmethod
     def _git_ref():

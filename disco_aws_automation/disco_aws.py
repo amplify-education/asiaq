@@ -38,7 +38,6 @@ from .disco_remote_exec import DiscoRemoteExec
 from .disco_storage import DiscoStorage
 from .disco_vpc import DiscoVPC
 from .resource_helper import (
-    TimeoutError,
     keep_trying,
     wait_for_state,
 )
@@ -335,7 +334,8 @@ class DiscoAWS(object):
                 tags={
                     "hostclass": hostclass,
                     "is_testing": "1" if testing else "0",
-                    "environment": self.environment_name
+                    "environment": self.environment_name,
+                    "productline": self.hostclass_option_default(hostclass, 'product_line', 'unknown')
                 },
                 cross_zone_load_balancing=is_truthy(
                     self.hostclass_option_default(

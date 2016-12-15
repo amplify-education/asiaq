@@ -5,13 +5,12 @@ Only Redis on Elasticache is supported at the moment
 import getpass
 import logging
 import hashlib
-from ConfigParser import ConfigParser
 
 import boto3
 import botocore
 from semantic_version import Spec, Version
 
-from . import normalize_path
+from .disco_config import read_config
 from .disco_route53 import DiscoRoute53
 from .exceptions import CommandError
 from .resource_helper import throttled_call
@@ -42,11 +41,9 @@ class DiscoElastiCache(object):
         """lazy load config"""
         if not self._config:
             try:
-                config = ConfigParser()
-                config.read(normalize_path(self.config_file))
-                self._config = config
+                self._config = read_config(self.config_file)
             except Exception:
-                return None
+                raise
         return self._config
 
     def list(self):

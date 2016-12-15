@@ -8,7 +8,6 @@ import boto.ec2
 import boto.ec2.autoscale
 import boto.ec2.autoscale.launchconfig
 import boto.ec2.autoscale.group
-from boto.ec2.autoscale.policy import ScalingPolicy
 from boto.exception import BotoServerError
 from botocore.exceptions import WaiterError
 import boto3
@@ -413,17 +412,17 @@ class DiscoAutoscale(object):
         return policies
 
     def create_policy(
-        self,
-        group_name,
-        policy_name,
-        policy_type="SimpleScaling",
-        adjustment_type=None,
-        min_adjustment_magnitude=None,
-        scaling_adjustment=None,
-        cooldown=600,
-        metric_aggregation_type=None,
-        step_adjustments=None,
-        estimated_instance_warmup=None
+            self,
+            group_name,
+            policy_name,
+            policy_type="SimpleScaling",
+            adjustment_type=None,
+            min_adjustment_magnitude=None,
+            scaling_adjustment=None,
+            cooldown=600,
+            metric_aggregation_type=None,
+            step_adjustments=None,
+            estimated_instance_warmup=None
     ):
         """
         Creates a new autoscaling policy, or updates an existing one if the autoscaling group name and

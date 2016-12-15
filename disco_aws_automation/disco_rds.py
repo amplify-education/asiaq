@@ -3,25 +3,24 @@ RDS Module. Can be used to perform various RDS operations
 """
 
 from __future__ import print_function
-import os
 import datetime
 import logging
 import time
 import sys
 import threading
-from ConfigParser import ConfigParser, NoOptionError, NoSectionError
+from ConfigParser import NoOptionError, NoSectionError
 
 import boto3
 import botocore
 import pytz
 
-from . import read_config, ASIAQ_CONFIG
+from .disco_config import read_config
 from .disco_alarm import DiscoAlarm
 from .disco_aws_util import is_truthy
 from .disco_creds import DiscoS3Bucket
 from .disco_route53 import DiscoRoute53
 from .disco_vpc_sg_rules import DiscoVPCSecurityGroupRules
-from .exceptions import TimeoutError, RDSEnvironmentError
+from .exceptions import TimeoutError, RDSEnvironmentError, AsiaqConfigError
 from .resource_helper import keep_trying, tag2dict, throttled_call
 
 logger = logging.getLogger(__name__)
@@ -223,7 +222,7 @@ class RDS(threading.Thread):
         logger.info("Updating RDS cluster %s", instance_params["DBInstanceIdentifier"])
         params = RDS.delete_keys(instance_params, [
             "Engine", "LicenseModel", "DBSubnetGroupName", "PubliclyAccessible",
-            "MasterUsername", "Port", "CharacterSetName", "StorageEncrypted"])
+            "MasterUsername", "Port", "CharacterSetName", "StorageEncrypted", "Tags"])
         throttled_call(self.client.modify_db_instance, ApplyImmediately=apply_immediately, **params)
         logger.info("Rebooting cluster to apply Param group %s", instance_params["DBInstanceIdentifier"])
         keep_trying(RDS_STATE_POLL_INTERVAL,
@@ -266,6 +265,13 @@ class RDS(threading.Thread):
         preferred_maintenance_window = self.config_with_default(self.config_rds, section,
                                                                 'preferred_maintenance_window',
                                                                 None)
+        tags = [
+            {'Key': 'environment', 'Value': env_name},
+            {'Key': 'db-name', 'Value': database_name},
+            {'Key': 'productline', 'Value': self.config_with_default(self.config_rds, section,
+                                                                     'product_line',
+                                                                     'unknown')}
+        ]
 
         instance_params = {
             'AllocatedStorage': self.config_integer(self.config_rds, section, 'allocated_storage'),
@@ -290,7 +296,8 @@ class RDS(threading.Thread):
             'VpcSecurityGroupIds': [self.rds_security_group_id],
             'StorageEncrypted': self.config_truthy(self.config_rds, section, 'storage_encrypted'),
             'BackupRetentionPeriod': self.config_integer(self.config_rds, section,
-                                                         'backup_retention_period', 1)
+                                                         'backup_retention_period', 1),
+            'Tags': tags
         }
 
         # If custom windows were set, use them. If windows are not specified, we will use the AWS defaults
@@ -373,20 +380,14 @@ class RDS(threading.Thread):
         self.create_db_parameter_group(db_parameter_group_name, db_parameter_group_family)
 
         # Extract the Custom Values from the config file
-        custom_param_file = os.path.join(ASIAQ_CONFIG,
-                                         'rds', 'engine_specific',
-                                         '{0}.ini'.format(database_name))
-
-        if os.path.isfile(custom_param_file):
-            custom_config = ConfigParser()
-            custom_config.read(custom_param_file)
-            try:
-                custom_db_params = custom_config.items(env_name)
-                logger.info("Updating RDS db_parameter_group %s (family: %s, #params: %s)",
-                            db_parameter_group_name, db_parameter_group_family, len(custom_db_params))
-                self.modify_db_parameter_group(db_parameter_group_name, custom_db_params)
-            except NoSectionError:
-                logger.info("Using Default RDS param")
+        try:
+            custom_config = read_config('rds', 'engine_specific', '{0}.ini'.format(database_name))
+            custom_db_params = custom_config.items(env_name)
+            logger.info("Updating RDS db_parameter_group %s (family: %s, #params: %s)",
+                        db_parameter_group_name, db_parameter_group_family, len(custom_db_params))
+            self.modify_db_parameter_group(db_parameter_group_name, custom_db_params)
+        except (NoSectionError, AsiaqConfigError):
+            logger.info("Using Default RDS param")
 
     def update_cluster(self):
         """

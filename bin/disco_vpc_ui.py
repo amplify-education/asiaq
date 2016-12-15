@@ -129,17 +129,20 @@ def proxy_peerings_command(args):
         print("Don't use vpc_name and vpc_id at the same time.")
         sys.exit(2)
 
+    vpc = None
     if args.vpc_name:
-        vpc_id = DiscoVPC.find_vpc_id_by_name(args.vpc_name)
+        vpc = DiscoVPC.fetch_environment(environment_name=args.vpc_name)
     elif args.vpc_id:
-        vpc_id = args.vpc_id
-    else:
-        vpc_id = None
+        vpc = DiscoVPC.fetch_environment(vpc_id=args.vpc_id)
+
+    vpc_id = vpc.get_vpc_id() if vpc else None
+
+    disco_peerings = DiscoVPCPeerings()
 
     if args.list_peerings:
         vpc_map = {vpc['id']: vpc for vpc in DiscoVPC.list_vpcs()}
         peerings = sorted(
-            DiscoVPCPeerings.list_peerings(vpc_id, include_failed=True),
+            disco_peerings.list_peerings(vpc_id, include_failed=True),
             key=lambda p: vpc_map.get(p['AccepterVpcInfo']['VpcId'])['tags'].get("Name"))
 
         for peering in peerings:
@@ -156,10 +159,9 @@ def proxy_peerings_command(args):
                     peering['RequesterVpcInfo'].get('CidrBlock')))
             print(line)
     elif args.delete_peerings:
-        DiscoVPCPeerings.delete_peerings(vpc_id)
+        disco_peerings.delete_peerings(vpc_id)
     elif args.create_peerings:
-        peering_configs = DiscoVPCPeerings.parse_peerings_config(vpc_id)
-        DiscoVPCPeerings.create_peering_connections(peering_configs)
+        disco_peerings.update_peering_connections(vpc)
 
 
 def run():

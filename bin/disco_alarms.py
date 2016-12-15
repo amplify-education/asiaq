@@ -31,8 +31,9 @@ import sys
 
 from docopt import docopt
 
-from disco_aws_automation import DiscoSNS, read_config
+from disco_aws_automation import DiscoSNS
 from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
 from disco_aws_automation.disco_alarm_config import DiscoAlarmsConfig
 from disco_aws_automation.disco_alarm import DiscoAlarm

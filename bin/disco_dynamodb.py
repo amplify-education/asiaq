@@ -10,7 +10,7 @@ import decimal
 import datetime
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation import DiscoDynamoDB
-from disco_aws_automation import read_config
+from disco_aws_automation.disco_config import read_config
 
 
 class DecimalEncoder(json.JSONEncoder):

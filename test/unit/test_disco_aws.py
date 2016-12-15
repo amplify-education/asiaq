@@ -330,7 +330,8 @@ class DiscoAWSTests(TestCase):
             "eip": None,
             "domain_name": "example.com",
             "elb": "yes",
-            "elb_health_check_url": "/foo"
+            "elb_health_check_url": "/foo",
+            "product_line": "mock_productline"
         }
         return get_mock_config(config)
 
@@ -356,7 +357,8 @@ class DiscoAWSTests(TestCase):
             tags={
                 'environment': 'unittestenv',
                 'hostclass': 'mhcelb',
-                'is_testing': '0'
+                'is_testing': '0',
+                'productline': 'mock_productline'
             },
             cross_zone_load_balancing=True,
             cert_name=None

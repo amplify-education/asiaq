@@ -32,6 +32,7 @@ def main(args):
     # the configobj pads things with spaces that pylint doesn't like
     file_data = re.sub("\s=\s", "=", file_data)
     file_data = re.sub(",\s", ",", file_data)
+    file_data = re.sub('=""', "=", file_data)
 
     with open(merged_config_file, 'w') as f:
         f.write(file_data)

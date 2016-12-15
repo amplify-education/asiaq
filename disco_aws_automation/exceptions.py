@@ -18,12 +18,32 @@ class ExpectedTimeoutError(TimeoutError):
 
 
 class EarlyExitException(Exception):
-    "Special no-op Exception class for non-error early exits from the program."
+    """
+    Special no-op Exception class for non-error early exits from the program.
+
+    Contrast with EasyExit, which is intended to terminate with a non-zero status (if the @graceful
+    decoration is used).
+    """
+    pass
+
+
+class EasyExit(Exception):
+    """
+    Raise this exception to exit your program with a log message and a non-zero status, but no stack trace
+    (assuming you are running it with run_gracefully).
+
+    Contrast with EarlyExitException, which is intended to short-circuit out with a non-error status.
+    """
     pass
 
 
 class ProgrammerError(Exception):
     "An exception state that resulted from a coding error, not an environment error."
+    pass
+
+
+class AsiaqConfigError(EasyExit):
+    "An exception that results from a config file not being found (no stack trace needed)."
     pass
 
 

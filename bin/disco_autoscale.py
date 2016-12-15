@@ -9,8 +9,9 @@ import sys
 
 from collections import defaultdict
 
-from disco_aws_automation import DiscoAutoscale, read_config
+from disco_aws_automation import DiscoAutoscale
 from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
 
 
@@ -143,8 +144,8 @@ def parse_arguments():
     return parser.parse_args()
 
 
-# R0912 Allow more than 12 branches so we can parse a lot of commands..
-# pylint: disable=R0912
+# R0912 Allow more than 12 branches and more than 15 local variables so we can have shoddily structured code
+# pylint: disable=R0912, R0914
 def run():
     """Parses command line and dispatches the commands"""
     config = read_config()

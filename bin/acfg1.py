@@ -55,7 +55,7 @@ def copy_tree(source, destination, hostclasses=None, dryrun=False):
 
 def _copy_files(source, destination, hostclasses, dryrun=False):
     # TODO Break this into smaller functions
-    # pylint: disable=R0914
+    # pylint: disable=R0914,R0912
 
     for path, dirnames, filenames in os.walk(source):
         destpath = os.path.join(destination, os.path.relpath(path, source))

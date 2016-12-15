@@ -4,18 +4,16 @@ Manage AWS ElasticSearch
 import logging
 import time
 import json
-from ConfigParser import NoOptionError
 
 import boto3
 
 from boto3.exceptions import Boto3Error
 from botocore.exceptions import BotoCoreError
-from . import read_config
+from .disco_config import read_config
 from .disco_route53 import DiscoRoute53
 from .resource_helper import throttled_call
 from .disco_aws_util import is_truthy
 from .disco_constants import (
-    DEFAULT_CONFIG_SECTION,
     VPC_CONFIG_FILE,
     ES_CONFIG_FILE
 )
@@ -32,7 +30,7 @@ class DiscoElasticsearch(object):
 
     def __init__(self, environment_name, config_aws=None, config_es=None,
                  config_vpc=None, route53=None, alarms=None):
-        self.config_aws = config_aws or read_config()
+        self.config_aws = config_aws or read_config(environment=environment_name)
         self.config_vpc = config_vpc or read_config(VPC_CONFIG_FILE)
         self.config_es = config_es or read_config(ES_CONFIG_FILE)
         self.route53 = route53 or DiscoRoute53()
@@ -84,7 +82,7 @@ class DiscoElasticsearch(object):
     def zone(self):
         """The current Route 53 zone"""
         if not self._zone:
-            self._zone = self.get_aws_option('domain_name')
+            self._zone = self.config_aws.get_asiaq_option('domain_name')
         return self._zone
 
     @property
@@ -289,7 +287,7 @@ class DiscoElasticsearch(object):
 
             if desired_elasticsearch_name in all_elasticsearch_names:
                 try:
-                    del(desired_es_config["ElasticsearchVersion"])
+                    del desired_es_config["ElasticsearchVersion"]
                     logging.debug("Ignoring ElasticsearchVersion specification on update")
                 except KeyError:
                     pass
@@ -421,38 +419,6 @@ class DiscoElasticsearch(object):
         raise RuntimeError("Could not find option, %s, in either the %s and the defaults sections "
                            "of the ElasticSearch config.",
                            option, section)
-
-    def get_aws_option(self, option, section=DEFAULT_CONFIG_SECTION):
-        """Get a value from the config"""
-        env_option = "{0}@{1}".format(option, self.environment_name)
-        default_option = "default_{0}".format(option)
-        default_env_option = "default_{0}".format(env_option)
-
-        if self.config_aws.has_option(section, env_option):
-            return self.config_aws.get(section, env_option)
-        if self.config_aws.has_option(section, option):
-            return self.config_aws.get(section, option)
-        elif self.config_aws.has_option(DEFAULT_CONFIG_SECTION, default_env_option):
-            return self.config_aws.get(DEFAULT_CONFIG_SECTION, default_env_option)
-        elif self.config_aws.has_option(DEFAULT_CONFIG_SECTION, default_option):
-            return self.config_aws.get(DEFAULT_CONFIG_SECTION, default_option)
-
-        raise NoOptionError(option, section)
-
-    def get_aws_option_default(self, option, section=DEFAULT_CONFIG_SECTION, default=None):
-        """Get a value from the config"""
-        try:
-            return self.get_aws_option(option, section)
-        except NoOptionError:
-            return default
-
-    def get_hostclass_option(self, option, hostclass):
-        """Fetch a hostclass configuration option, if it does not exist get the default"""
-        return self.get_aws_option(option, hostclass)
-
-    def get_hostclass_option_default(self, option, hostclass, default=None):
-        """Fetch a hostclass configuration option, if it does not exist get the default"""
-        return self.get_aws_option_default(option, hostclass, default)
 
     def _get_nat_eips(self):
         env_option = 'envtype:{}'.format(self.environment_name)

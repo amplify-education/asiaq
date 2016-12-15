@@ -1,23 +1,19 @@
 """
 Manage AWS SSM document creation and execution
 """
+from __future__ import print_function
 import os
 import logging
 import time
 import json
-from ConfigParser import NoOptionError
 
 import boto3
 from botocore.exceptions import ClientError
 
-from . import read_config
+from .disco_config import read_config
 from .resource_helper import throttled_call, wait_for_state_boto3
 from .exceptions import TimeoutError
 from .disco_creds import DiscoS3Bucket
-from .resource_helper import throttled_call
-from .disco_constants import (
-    DEFAULT_CONFIG_SECTION
-)
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +32,12 @@ class DiscoSSM(object):
     """
 
     def __init__(self, environment_name=None, config_aws=None):
-        self.config_aws = config_aws or read_config()
+        self.config_aws = config_aws or read_config(environment=environment_name)
 
         if environment_name:
             self.environment_name = environment_name.lower()
         else:
-            self.environment_name = self.config_aws.get("disco_aws", "default_environment")
+            self.environment_name = self.config_aws.environment
 
         self._conn = None  # Lazily initialized
 
@@ -54,7 +50,7 @@ class DiscoSSM(object):
 
     def get_s3_bucket_name(self):
         """Convenience method for returning the configured s3 bucket for SSM"""
-        return self.get_aws_option_default("ssm_s3_bucket", default=None)
+        return self.config_aws.get_asiaq_option("ssm_s3_bucket", required=False)
 
     def get_s3_bucket(self, bucket_name=None):
         """A bit of a convenience function for getting an S3 bucket"""
@@ -155,8 +151,9 @@ class DiscoSSM(object):
                 instance_ids
             )
             time.sleep(5)
-        raise TimeoutException(
-            "Timed out waiting for execution of document '%s' against instances %s after '%s' seconds".format(
+        raise TimeoutError(
+            "Timed out waiting for execution of document '{0}' against instances {1} after '{2}' "
+            "seconds".format(
                 document_name,
                 instance_ids,
                 timeout
@@ -239,12 +236,12 @@ class DiscoSSM(object):
         if stdout_keys:
             stdout = bucket.get_key(stdout_keys[0]).decode('utf-8').strip()
         else:
-            stdout = '-'
+            stdout = u'-'
 
         if stderr_keys:
             stderr = bucket.get_key(stderr_keys[0]).decode('utf-8').strip()
         else:
-            stderr = '-'
+            stderr = u'-'
 
         plugin_output = {
             'name': command_plugin['Name'],
@@ -404,27 +401,3 @@ class DiscoSSM(object):
     def _list_command_invocations(self, **arguments):
         """Convenience method for listing invocations of SSM commands"""
         return throttled_call(self.conn.list_command_invocations, **arguments)
-
-    def get_aws_option(self, option, section=DEFAULT_CONFIG_SECTION):
-        """Get a value from the config"""
-        env_option = "{0}@{1}".format(option, self.environment_name)
-        default_option = "default_{0}".format(option)
-        default_env_option = "default_{0}".format(env_option)
-
-        if self.config_aws.has_option(section, env_option):
-            return self.config_aws.get(section, env_option)
-        if self.config_aws.has_option(section, option):
-            return self.config_aws.get(section, option)
-        elif self.config_aws.has_option(DEFAULT_CONFIG_SECTION, default_env_option):
-            return self.config_aws.get(DEFAULT_CONFIG_SECTION, default_env_option)
-        elif self.config_aws.has_option(DEFAULT_CONFIG_SECTION, default_option):
-            return self.config_aws.get(DEFAULT_CONFIG_SECTION, default_option)
-
-        raise NoOptionError(option, section)
-
-    def get_aws_option_default(self, option, section=DEFAULT_CONFIG_SECTION, default=None):
-        """Get a value from the config"""
-        try:
-            return self.get_aws_option(option, section)
-        except NoOptionError:
-            return default

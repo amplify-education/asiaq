@@ -8,7 +8,8 @@ import argparse
 
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.disco_logging import configure_logging
-from disco_aws_automation import DiscoChaos, read_config
+from disco_aws_automation.disco_config import read_config
+from disco_aws_automation import DiscoChaos
 
 
 def get_parser():

@@ -8,8 +8,9 @@ import argparse
 import sys
 import getpass
 
-from disco_aws_automation import DiscoS3Bucket, DiscoVPC, read_config
+from disco_aws_automation import DiscoS3Bucket, DiscoVPC
 from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
 
 

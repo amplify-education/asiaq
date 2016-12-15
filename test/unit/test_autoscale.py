@@ -254,7 +254,7 @@ class DiscoAutoscaleTests(TestCase):
 
         shared_vars = {'next_token': next_token}
 
-        def _mock_describe_policies(**args):
+        def _mock_describe_policies(**_kwargs):
             if shared_vars['next_token']:
                 temp_token = shared_vars['next_token']
                 shared_vars['next_token'] = None

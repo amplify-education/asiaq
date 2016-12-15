@@ -6,7 +6,7 @@ Right now only substitutes the template name and hostclass
 from string import Template  # pylint: disable=W0402
 import os
 
-from . import normalize_path
+from .disco_config import normalize_path
 from .disco_constants import HOSTCLASS_PREFIX
 
 TEMPLATES = [

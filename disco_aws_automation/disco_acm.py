@@ -5,12 +5,15 @@ import logging
 
 import boto3
 import botocore
+from .resource_helper import throttled_call
 
 logger = logging.getLogger(__name__)
 
 CERT_SUMMARY_LIST_KEY = 'CertificateSummaryList'
 CERT_ARN_KEY = 'CertificateArn'
+CERT_ALT_NAMES_KEY = 'SubjectAlternativeNames'
 DOMAIN_NAME_KEY = 'DomainName'
+CERT_KEY = 'Certificate'
 
 
 class DiscoACM(object):
@@ -69,15 +72,27 @@ class DiscoACM(object):
             return None
 
         try:
-            cert_summary = self.acm.list_certificates()[CERT_SUMMARY_LIST_KEY]
-            certs = [cert for cert in cert_summary if self._in_domain(cert[DOMAIN_NAME_KEY], dns_name)]
-            # determine the most specific domain match
-            certs.sort(key=lambda cert: len(cert[DOMAIN_NAME_KEY]), reverse=True)
-            if not certs:
+            cert_summary = throttled_call(self.acm.list_certificates)[CERT_SUMMARY_LIST_KEY]
+
+            cert_matches = []
+            for cert in cert_summary:
+                response = throttled_call(self.acm.describe_certificate, CertificateArn=cert[CERT_ARN_KEY])
+                cert = response[CERT_KEY]
+                # search for the dns_name in the cert's alternative domain names (includes the main one)
+                for alt_name in cert[CERT_ALT_NAMES_KEY]:
+                    if self._in_domain(alt_name, dns_name):
+                        # a tuple of the matching cert domain name and the actual cert
+                        cert_matches.append((alt_name, cert))
+
+            # sort the matches by name, longest first
+            cert_matches.sort(key=lambda cert: len(cert[0]), reverse=True)
+
+            if not cert_matches:
                 logger.warning("No ACM certificates returned for %s", dns_name)
                 return None
-            else:
-                return certs[0][CERT_ARN_KEY]
+
+            # pick the cert for the longest matched domain name
+            return cert_matches[0][1][CERT_ARN_KEY]
         except (botocore.exceptions.EndpointConnectionError,
                 botocore.vendored.requests.exceptions.ConnectionError):
             # some versions of botocore(1.3.26) will try to connect to acm even if outside us-east-1

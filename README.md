@@ -635,7 +635,7 @@ Environments
 
 Environments created by Asiaq are separated out by VPCs.
 Each environment resides in its own VPC and has its own metanetworks,
-gateways, instances, and so on. All environment management is done with
+gateways, instances, and so on. Most environment management is done with
 the disco_vpc_ui.py tool.
 
 ### Listing Active Environments
@@ -708,6 +708,38 @@ If you will be doing a lot of work in a particular environment you can
 define the DEFAULT_ENV environment variable and disco_aws.py will
 default to working in that environment.
 
+### Working with "sandbox" environments
+
+As a special case, asiaq has a convenience tool that creates VPCs with
+the "sandbox" type, and provides a few shortcuts:
+
+    * the VPC will automatically be provisioned using the pipeline file
+      in "sandboxes/${SANDBOX_NAME}/pipeline.csv
+    * a preset list of configuration files may be synced to an S3
+      bucket, so that hosts that spin up in a named sandbox are able
+      to configure themselves differently if need be (this can be
+      useful for managing service discovery, if the sandbox does not
+      contain an instance of every possible hostclass and its
+      dependencies).
+
+To spin up a sandbox, from a pipeline that has already been created in
+the appropriate configuration location, you can simply run
+
+    asiaq sandbox $SANDBOX_NAME
+
+To configure configuration-file syncing, set the `sandbox_sync_config`
+option in the `disco_aws` section of the main configuration file to
+the name of the S3 bucket, and populate the `sandbox_sync_config`
+option.  This option is line-based, and contains whitespace-separated
+tuples in the form (local file, remote directory): for each line, the file
+`sandboxes/$SANDBOX_NAME/$LOCAL_FILE` will be copied to the s3 bucket
+in the location `$REMOTE_DIRECTORY/$SANDBOX_NAME`.  So, by way of example:
+
+    sandbox_config_bucket=us-west-2.myproject.sandboxes
+    sandbox_sync_config=zk_blacklist zookeeper-sync-black-lists
+        trusted_ip_list   firewall-trusted-cidrs
+
+
 Provisioning a pipeline
 -----------------------
 
@@ -725,7 +757,7 @@ The format of the CSV file is pretty simple. Here is a short sample:
     2,mhcdiscotaskstatus,,1,,m3.large,,,no,yes,disco_profiling_task_status_service
     2,mhcdiscoinferenceworer,1,1@45 19 * * *:3@33 19 * * *,,5,m3.large,,,no,yes,disco_inference_workflow
 
-Field descriptions:
+### Field Descriptions
 
 1.  Instance boot sequence number. The smaller the number the earlier
     the machines are started, relative to others. This field need not to
@@ -753,12 +785,14 @@ Field descriptions:
 12. integration_test Name of the integration test to run to verify
     instances are in a good state
 
+#### Schedule Scaling
 The desired_size can be either an integer or a colon (:) separated list
 of integers with cron formatted times at which to apply each size. Using
 the at symbol (@) to separate the desired size and the cron
 specification. For example, `"1@30 10 * * *:5@45 1 * * *"` says to scale
 to one host at 10:30 AM UTC and scale to 5 hosts at 1:45 AM UTC.
 
+### Manual Provisioning
 But you can also provision machines one at a time using the provision
 command, for example:
 
@@ -1250,6 +1284,25 @@ customer has two networks to route via IGW:
 
     dmz_vgw_routes=10.123.0.0/16 1.124.0.0/16
 
+#### VPC Peering
+
+Peering can be configured between VPCs to enable communication between them. 
+The syntax for the peering config is `vpc_name[:vpc_type]/metanetwork vpc_name[:vpc_type]/metanetwork`.
+`vpc_name` can either be the name of an existing VPC or `*` to match any VPC of a certain type. 
+
+For example:
+
+    [peerings]
+    connection_1=example-vpc:sandbox/tunnel ci/intranet
+    connection_2=*:sandbox/tunnel ci/intranet
+    
+The keys for the peering config don't matter except that they must be unique and start with `connection_`
+    
+The `connection_1` configuration will create a peering connection from the `example-vpc` to a vpc named `ci`. 
+Security groups will be updated to allow traffic from `example-vpc`'s tunnel metanetwork to `ci`'s intranet metanetwork.
+    
+The `connection_2` configuration will create peering connections to any VPC of type `sandbox` to `ci`
+
 ### Instance Network Options
 
 #### Instance IP Addresses
@@ -1417,12 +1470,12 @@ which work how you would expect them to work.
 
 There is also a create command that allows you to create the initial
 EBS volume snapshot for a hostclass. This initial volume will not be
-formatted.
+formatted. The volume created and its snapshot will be encrypted by default.
+You can pass option --unencrypted to create an unencrypted EBS volume.
 
 
 Identity and Access Management
 ------------------------------
-
 We make use of IAM for access control to AWS resources quite
 extensively. Despite this we treat the IAM configuration in AWS as
 ephemeral, it gets periodically reloaded from configuration stored in

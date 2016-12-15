@@ -44,7 +44,7 @@ class DiscoELBTests(TestCase):
         self.acm.get_certificate_arn.return_value = TEST_CERTIFICATE_ARN_ACM
         self.iam.get_certificate_arn.return_value = TEST_CERTIFICATE_ARN_IAM
 
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments, R0914
     def _create_elb(self, hostclass=TEST_HOSTCLASS, public=False, tls=False,
                     instance_protocol='HTTP', instance_port=80,
                     elb_protocols='HTTP', elb_ports='80',
@@ -214,7 +214,7 @@ class DiscoELBTests(TestCase):
         )
 
     @mock_elb
-    def test_get_elb_with_tls_and_cert_name_not_found(self):
+    def test_get_elb_cert_name_not_found(self):
         """Test creation an ELB with TLS and a specific cert name that doesn't exist"""
         elb_client = self.disco_elb.elb_client
         elb_client.create_load_balancer = MagicMock(wraps=elb_client.create_load_balancer)
@@ -327,7 +327,7 @@ class DiscoELBTests(TestCase):
         )
 
     @mock_elb
-    def test_get_elb_without_cross_zone_load_balancing(self):
+    def test_get_elb_no_cross_zone_lb(self):
         """Test creating ELB without cross zone load balancing"""
         client = self.disco_elb.elb_client
         client.modify_load_balancer_attributes = MagicMock(wraps=client.modify_load_balancer_attributes)

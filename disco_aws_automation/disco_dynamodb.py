@@ -6,7 +6,7 @@ import json
 
 import boto3
 
-from . import normalize_path
+from .disco_config import normalize_path
 from .exceptions import DynamoDBEnvironmentError
 from .resource_helper import throttled_call
 
