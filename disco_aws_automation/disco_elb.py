@@ -10,13 +10,15 @@ import hashlib
 import boto3
 import botocore
 
-from .disco_aws_util import get_tag_value
+from .disco_aws_util import get_tag_value, is_truthy
 from .disco_route53 import DiscoRoute53
 from .disco_acm import DiscoACM
 from .disco_iam import DiscoIAM
 from .exceptions import CommandError, TimeoutError
 from .resource_helper import throttled_call
 from .disco_aws_util import chunker
+
+logger = logging.getLogger(__name__)
 
 
 STICKY_POLICY_NAME = 'session-cookie-policy'
@@ -52,7 +54,7 @@ class DiscoELB(object):
         try:
             return self.acm.get_certificate_arn(dns_name) or self.iam.get_certificate_arn(dns_name)
         except Exception:
-            logging.info("Unable to find a SSL certificate for DNS entry %s", dns_name)
+            logger.info("Unable to find a SSL certificate for DNS entry %s", dns_name)
             return None
 
     def list(self):
@@ -79,8 +81,15 @@ class DiscoELB(object):
         # Populate our ELB info dicts
         for tag_description in tag_descriptions:
             elb_id = tag_description["LoadBalancerName"]
-            # If they have an 'elb_name' tag, use that instead of the actual LoadBalancerName
-            elb_name = get_tag_value(tag_description["Tags"], "elb_name") or elb_id
+            # Try to figure out the name of the ELB from its tags
+            hostclass = get_tag_value(tag_description["Tags"], "hostclass")
+            environment = get_tag_value(tag_description["Tags"], "environment")
+            testing = get_tag_value(tag_description["Tags"], "is_testing")
+            if hostclass and environment and testing is not None:
+                elb_name = self.get_elb_name(environment, hostclass, is_truthy(testing))
+            else:
+                # Otherwise, look for the elb_name tag or just use the name of the load balancer
+                elb_name = get_tag_value(tag_description["Tags"], "elb_name") or elb_id
             elb = [elb_in_env for elb_in_env in elbs_in_env
                    if elb_in_env["LoadBalancerName"] == elb_id][0]
             availability_zones = ','.join(elb["AvailabilityZones"])
@@ -102,7 +111,7 @@ class DiscoELB(object):
     def _setup_health_check(self, elb_id, health_check_url, instance_protocol, instance_port,
                             elb_name):
         if not health_check_url:
-            logging.warning("No health check url configured for ELB %s", elb_name)
+            logger.warning("No health check url configured for ELB %s", elb_name)
             if instance_protocol.upper() in ('HTTP', 'HTTPS'):
                 health_check_url = '/'
             else:
@@ -122,7 +131,7 @@ class DiscoELB(object):
     def _setup_sticky_cookies(self, elb_id, elb_ports, sticky_app_cookie, elb_name):
         policies = throttled_call(self.elb_client.describe_load_balancer_policies,
                                   LoadBalancerName=elb_id)
-        logging.debug("ELB policies found: %s", policies['PolicyDescriptions'])
+        logger.debug("ELB policies found: %s", policies['PolicyDescriptions'])
 
         def _set_policies_for_elb_ports(policies):
             for elb_port in elb_ports:
@@ -132,7 +141,7 @@ class DiscoELB(object):
                                PolicyNames=policies)
 
         if [desc for desc in policies['PolicyDescriptions'] if desc['PolicyName'] == STICKY_POLICY_NAME]:
-            logging.warning("Deleting sticky session policy from ELB %s", elb_name)
+            logger.warning("Deleting sticky session policy from ELB %s", elb_name)
             _set_policies_for_elb_ports([])
             throttled_call(self.elb_client.delete_load_balancer_policy,
                            LoadBalancerName=elb_id,
@@ -141,10 +150,10 @@ class DiscoELB(object):
         if sticky_app_cookie:
             policy_args = dict(LoadBalancerName=elb_id, PolicyName=STICKY_POLICY_NAME)
             if sticky_app_cookie in ('ELB', 'AWSELB'):
-                logging.warning("Using ELB-generated sticky sessions for ELB %s", elb_name)
+                logger.warning("Using ELB-generated sticky sessions for ELB %s", elb_name)
                 policy_creator = self.elb_client.create_lb_cookie_stickiness_policy
             else:
-                logging.warning("Using app-generated sticky sessions for ELB %s", elb_name)
+                logger.warning("Using app-generated sticky sessions for ELB %s", elb_name)
                 policy_args['CookieName'] = sticky_app_cookie
                 policy_creator = self.elb_client.create_app_cookie_stickiness_policy
             throttled_call(policy_creator, **policy_args)
@@ -156,7 +165,8 @@ class DiscoELB(object):
     def get_or_create_elb(self, hostclass, security_groups, subnets, hosted_zone_name,
                           health_check_url, instance_protocol, instance_port,
                           elb_protocols, elb_ports, elb_public, sticky_app_cookie,
-                          idle_timeout=None, connection_draining_timeout=None, testing=False):
+                          idle_timeout=None, connection_draining_timeout=None, testing=False, tags=None,
+                          cross_zone_load_balancing=True, cert_name=None):
         """
         Returns an elb.
         This updates an existing elb if it exists, otherwise this creates a new elb.
@@ -178,6 +188,10 @@ class DiscoELB(object):
             connection_draining_timeout (int): timeout limit (in seconds) that ELB should allow for open
                                                requests to resolve before removing EC2 instance from ELB
             testing (bool): True if the ELB will be used for testing purposes only.
+            tags (dict): dict of tag names as keys and tag values. Removing tags is not supported
+            cross_zone_load_balancing (bool): True if ELB should have load balancing across zones enabled.
+            cert_name (str): The DNS name of a ACM cert or the name of a IAM cert to use.
+                             Ignored if protocol isn't SSL or HTTPS
         """
         cname = self.get_cname(hostclass, hosted_zone_name, testing=testing)
         elb_id = DiscoELB.get_elb_id(self.vpc.environment_name, hostclass, testing=testing)
@@ -188,7 +202,7 @@ class DiscoELB(object):
         elb_ports = str(elb_ports).split(',')
 
         if not elb:
-            logging.info("Creating ELB %s", elb_name)
+            logger.info("Creating ELB %s", elb_name)
 
             if len(elb_protocols) != len(elb_ports):
                 raise CommandError('The number of ELB ports and protocols must match for ELB %s', elb_name)
@@ -202,17 +216,19 @@ class DiscoELB(object):
 
             for listener in listeners:
                 # Only try to lookup a cert if we are using a secure protocol for the ELB
-                if listener['Protocol'] in ["HTTPS", "SSL"]:
-                    listener['SSLCertificateId'] = self.get_certificate_arn(cname) or ''
+                if listener['Protocol'].upper() in ["HTTPS", "SSL"]:
+                    # Look up the cert by the provided name or the ELB's CNAME
+                    if cert_name:
+                        cert = self.get_certificate_arn(cert_name)
+                    else:
+                        cert = self.get_certificate_arn(cname)
+                    listener['SSLCertificateId'] = cert or ''
 
             elb_args = {
                 'LoadBalancerName': elb_id,
                 'Listeners': listeners,
                 'SecurityGroups': security_groups,
-                'Subnets': subnets,
-                'Tags': [
-                    {'Key': 'elb_name', 'Value': elb_name}
-                ]
+                'Subnets': subnets
             }
 
             if not elb_public:
@@ -228,11 +244,18 @@ class DiscoELB(object):
 
         self._setup_health_check(elb_id, health_check_url, instance_protocol, instance_port, elb_name)
         self._setup_sticky_cookies(elb_id, elb_ports, sticky_app_cookie, elb_name)
-        self._update_elb_attributes(elb_id, idle_timeout, connection_draining_timeout)
+        self._update_elb_attributes(
+            elb_id,
+            idle_timeout,
+            connection_draining_timeout,
+            cross_zone_load_balancing
+        )
+        self._update_tags(elb_id, tags)
 
         return elb
 
-    def _update_elb_attributes(self, elb_id, idle_timeout, connection_draining_timeout):
+    def _update_elb_attributes(self, elb_id, idle_timeout, connection_draining_timeout,
+                               cross_zone_load_balancing):
         updates = {}
         if idle_timeout:
             updates['ConnectionSettings'] = {
@@ -250,6 +273,10 @@ class DiscoELB(object):
                 'Timeout': 0
             }
 
+        updates['CrossZoneLoadBalancing'] = {
+            'Enabled': cross_zone_load_balancing
+        }
+
         if updates:
             throttled_call(self.elb_client.modify_load_balancer_attributes,
                            LoadBalancerName=elb_id,
@@ -266,6 +293,14 @@ class DiscoELB(object):
 
         return self._get_elb(elb_id) or self._get_elb(elb_name)
 
+    def _update_tags(self, elb_id, tags):
+        if tags:
+            logger.info("Tagging ELB %s with %s tags", elb_id, tags)
+            tag_dicts = [{'Key': key, 'Value': value} for key, value in tags.iteritems()]
+            throttled_call(self.elb_client.add_tags,
+                           LoadBalancerNames=[elb_id],
+                           Tags=tag_dicts)
+
     def _get_elb(self, load_balancer_name):
         """Get an ELB by its name"""
         try:
@@ -281,12 +316,12 @@ class DiscoELB(object):
         elb = self.get_elb(hostclass, testing=testing)
 
         if not elb:
-            logging.info("ELB for '%s' does not exist. Nothing to delete", hostclass)
+            logger.info("ELB for '%s' does not exist. Nothing to delete", hostclass)
             return
 
-        logging.info("Deleting ELB %s", DiscoELB.get_elb_name(self.vpc.environment_name,
-                                                              hostclass=hostclass,
-                                                              testing=testing))
+        logger.info("Deleting ELB %s", DiscoELB.get_elb_name(self.vpc.environment_name,
+                                                             hostclass=hostclass,
+                                                             testing=testing))
 
         # delete any CNAME records that point to the deleted ELB because they are no longer valid
         self.route53.delete_records_by_value('CNAME', elb['DNSName'])
@@ -353,7 +388,7 @@ class DiscoELB(object):
         return instances["InstanceStates"]
 
     def wait_for_instance_health_state(self, hostclass, testing=False, instance_ids=None, state="InService",
-                                       timeout=180):
+                                       timeout=600):
         """
         Waits for instances attached to an ELB to enter a specific state. At least one instance must enter the
         specified state.
@@ -364,7 +399,7 @@ class DiscoELB(object):
         instance_ids    A list of instance_ids to filter to. Defaults to all instances in the ELB.
         state           The state to wait for the instances. Should be one of ['InService', 'OutOfService',
                         'Unknown']. Defaults to 'InService'.
-        timeout         The number of seconds to wait for instances to reach that state. Default: 60.
+        timeout         The number of seconds to wait for instances to reach that state. Default: 600.
         See http://boto3.readthedocs.io/en/latest/reference/services/elb.html
         """
         elb = self.get_elb(hostclass=hostclass, testing=testing)
@@ -376,13 +411,17 @@ class DiscoELB(object):
         while time.time() < stop_time:
             instances = self._describe_instance_health(elb_id=elb_id, instance_ids=instance_ids)
             if len(instances) >= 1 and all(instance["State"] == state for instance in instances):
-                logging.info("Successfully waited for %s in ELB (%s) to enter state (%s)",
-                             original_scope, elb_name, state)
+                logger.info("Successfully waited for %s in ELB (%s) to enter state (%s)",
+                            original_scope, elb_name, state)
                 return
             # Update scope to be the instances that have not yet entered the desired state
             scope = [instance["InstanceId"] for instance in instances if instance["State"] != state]
-            logging.info("Waiting for %s in ELB %s to enter state (%s)",
-                         scope or original_scope, elb_name, state)
+            logger.info(
+                "Waiting for %s in ELB (%s) to enter state (%s)",
+                scope or original_scope,
+                elb_name,
+                state
+            )
             time.sleep(5)
         raise TimeoutError(
             "Timed out after waiting {} seconds for {} in ELB ({}) to enter state ({})".format(timeout,

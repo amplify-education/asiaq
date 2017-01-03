@@ -15,8 +15,10 @@ import boto.iam
 import boto3
 import botocore
 
-from . import read_config
+from .disco_config import read_config
 from .disco_aws_util import is_truthy
+
+logger = logging.getLogger(__name__)
 
 
 IAM_USER_POLICY_DIR = "iam/user_policies"
@@ -102,7 +104,7 @@ class DiscoIAM(object):
 
     def remove_group(self, group_name):
         '''Deletes an IAM User Group (this removes users and policies from group first)'''
-        logging.debug("Removing group %s.", group_name)
+        logger.debug("Removing group %s.", group_name)
         for user in self.list_group_members(group_name):
             self.remove_user_from_group(user, group_name)
         for policy in self.list_group_policies(group_name):
@@ -128,7 +130,7 @@ class DiscoIAM(object):
 
     def set_group_policy(self, group_name, policy_name, policy_file):
         """Sets one of a groups IAM policies by name"""
-        logging.debug("Applying policy %s to group %s from %s.", policy_name, group_name, policy_file)
+        logger.debug("Applying policy %s to group %s from %s.", policy_name, group_name, policy_file)
         with open(policy_file) as infile:
             policy = infile.read()
         policy_json = json.dumps(json.loads(policy), indent=4)  # indentation is important
@@ -156,12 +158,12 @@ class DiscoIAM(object):
 
     def create_user(self, user_name):
         '''Creates an IAM User'''
-        logging.debug("Creating user %s.", user_name)
+        logger.debug("Creating user %s.", user_name)
         self.connection.create_user(user_name)
 
     def remove_user(self, user_name):
         '''Deletes an IAM User'''
-        logging.debug("Removing user %s.", user_name)
+        logger.debug("Removing user %s.", user_name)
         for key in self.list_access_keys(user_name):
             self.remove_access_key(user_name, key.access_key_id)
         iam = boto3.resource('iam')
@@ -173,7 +175,7 @@ class DiscoIAM(object):
         try:
             login_profile.delete()
         except botocore.exceptions.ClientError as error:
-            logging.debug("%s doesnt have a login profile. Error Response: %s", user_name, error.response)
+            logger.debug("%s doesnt have a login profile. Error Response: %s", user_name, error.response)
         self.connection.delete_user(user_name)
 
     def list_user_groups(self, user_name):
@@ -214,7 +216,7 @@ class DiscoIAM(object):
 
     def remove_access_key(self, user_name, access_key_id):
         '''Deletes an AWS access key from an IAM user'''
-        logging.debug("Removing %s's key %s", user_name, access_key_id)
+        logger.debug("Removing %s's key %s", user_name, access_key_id)
         self.connection.delete_access_key(access_key_id, user_name)
 
     # TODO refactor instance profile functions
@@ -269,7 +271,7 @@ class DiscoIAM(object):
 
     def createrole(self, role_name, arpd=None):
         '''Creates an IAM Role'''
-        logging.debug("Creating role %s", role_name)
+        logger.debug("Creating role %s", role_name)
         self.connection.create_role(role_name, arpd)
 
     def removerole(self, role_name):
@@ -297,7 +299,7 @@ class DiscoIAM(object):
 
     def createrolepolicy(self, role_name, policy_name, policy_file):
         '''Creates an IAM Role Policy given an input file containing the appropriate json'''
-        logging.debug("Applying policy %s to role %s from %s.", policy_name, role_name, policy_file)
+        logger.debug("Applying policy %s to role %s from %s.", policy_name, role_name, policy_file)
         with open(policy_file) as infile:
             policy = infile.read()
         policy_json = json.dumps(json.loads(policy), indent=4)  # indentation is important
@@ -361,7 +363,7 @@ class DiscoIAM(object):
         for role in old_roles:
             if role not in updated_roles:
                 self.removerole(role)
-                logging.debug("Cleanup Role(%s)", role)
+                logger.debug("Cleanup Role(%s)", role)
                 deleted_roles.append(role)
         return deleted_roles
 
@@ -382,9 +384,13 @@ class DiscoIAM(object):
             json_data = json.load(tr_file)
             return json.dumps(json_data, indent=4)  # indentation is important
 
-    def _create_role_name(self, role_prefix, policy, naked_roles):
+    def _create_role_name(self, role_prefix, policy, naked_roles=None):
+        if not naked_roles:
+            naked_roles = self.option_list("naked_roles")
+
         if policy in naked_roles:
             return policy
+
         parts = []
         if role_prefix:
             parts.append(role_prefix)
@@ -414,7 +420,7 @@ class DiscoIAM(object):
             federated_trust = self._get_federated_trust_relationship_json()
         except IOError:
             federated_trust = None
-            logging.debug("Not federating trust, no trust document found at %s", IAM_ARPD_PATH)
+            logger.debug("Not federating trust, no trust document found at %s", IAM_ARPD_PATH)
 
         policies = set(all_policies) - set(policy_blacklist)
 
@@ -437,8 +443,8 @@ class DiscoIAM(object):
             updated_roles.append(role_name)
 
         deleted_roles = self._cleanup_roles(federated_roles, updated_roles)
-        logging.debug("Updated federated user roles: %s.", updated_roles)
-        logging.debug("Deleted federated user roles: %s.", deleted_roles)
+        logger.debug("Updated federated user roles: %s.", updated_roles)
+        logger.debug("Deleted federated user roles: %s.", deleted_roles)
         return (updated_roles, deleted_roles)
 
     def reapply_instance_policies(self):
@@ -476,8 +482,8 @@ class DiscoIAM(object):
             updated_roles.append(role_name)
 
         deleted_roles = self._cleanup_roles(instance_roles, updated_roles)
-        logging.debug("Updated instance roles: %s.", updated_roles)
-        logging.debug("Deleted instance roles: %s.", deleted_roles)
+        logger.debug("Updated instance roles: %s.", updated_roles)
+        logger.debug("Deleted instance roles: %s.", deleted_roles)
         return (updated_roles, deleted_roles)
 
     def _prune_group_policies(self, group_name, keep_policy):
@@ -510,8 +516,8 @@ class DiscoIAM(object):
                 self.remove_group(group)
                 deleted_groups.append(group)
 
-        logging.debug("Updated policies on groups: %s.", updated_groups)
-        logging.debug("Deleted groups: %s.", deleted_groups)
+        logger.debug("Updated policies on groups: %s.", updated_groups)
+        logger.debug("Deleted groups: %s.", deleted_groups)
         return (updated_groups, deleted_groups)
 
     def list_group_members(self, group):
@@ -532,7 +538,7 @@ class DiscoIAM(object):
 
         # Create users before we attempt to add them to groups
         for user in users.difference(existing_users):
-            logging.debug("Creating user %s.", user)
+            logger.debug("Creating user %s.", user)
             self.create_user(user)
 
         # Update group members
@@ -546,10 +552,10 @@ class DiscoIAM(object):
         for group in groups.keys() + self.list_groups():
             existing_members = set(self.list_group_members(group))
             for user in groups[group].difference(existing_members):
-                logging.debug("Adding user %s to group %s", user, group)
+                logger.debug("Adding user %s to group %s", user, group)
                 self.add_user_to_group(user, group)
             for user in existing_members.difference(groups[group]):
-                logging.debug("Removing user %s from group %s", user, group)
+                logger.debug("Removing user %s from group %s", user, group)
                 self.remove_user_from_group(user, group)
 
         # Delete users after they've been purged from groups
@@ -563,7 +569,7 @@ class DiscoIAM(object):
                             if not self.list_group_members(group)]
             for group in empty_groups:
                 self.remove_group(group)
-            logging.debug("Deleted empty groups: %s.", empty_groups)
+            logger.debug("Deleted empty groups: %s.", empty_groups)
 
     def create_saml_provider(self):
         """
@@ -572,14 +578,14 @@ class DiscoIAM(object):
         name = self.option("saml_provider_name")
         url = self.option("saml_provider_url")
         if not name or not url:
-            logging.debug("No SAML provider")
+            logger.debug("No SAML provider")
             return None
 
         metadata_response = urllib2.urlopen(url)
         federation_metadata = metadata_response.read()
         self.connection.create_saml_provider(federation_metadata, name)
 
-        logging.debug("Created SAML provider: %s.", name)
+        logger.debug("Created SAML provider: %s.", name)
         return name
 
     def list_saml_providers(self):
@@ -598,8 +604,19 @@ class DiscoIAM(object):
         for provider in self.list_saml_providers():
             deleted.append(provider.arn)
             self.connection.delete_saml_provider(provider.arn)
-        logging.debug("Deleted SAML providers: %s.", deleted)
+        logger.debug("Deleted SAML providers: %s.", deleted)
         return deleted
+
+    def get_role_arn(self, policy_name):
+        """
+        Returns the ARN of the role associated with the policy
+        """
+        role_prefix = self.option("role_prefix")
+        role_name = self._create_role_name(role_prefix, policy_name)
+
+        role = self.boto3_iam.get_role(RoleName=role_name).get("Role")
+
+        return role["Arn"] if role else ""
 
 
 class AssumeRolePolicyDocument(object):

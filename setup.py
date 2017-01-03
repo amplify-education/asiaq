@@ -5,13 +5,13 @@ import re
 import sys
 import os.path
 
-
+MODULE_NAME = "disco_aws_automation"
 VERSION_REGEX = re.compile(r"""
     ^__version__\s=\s
     ['"](?P<version>.*?)['"]
 """, re.MULTILINE | re.VERBOSE)
 
-VERSION_FILE = os.path.join("disco_aws_automation", "version.py")
+VERSION_FILE = os.path.join(MODULE_NAME, "version.py")
 
 
 def get_version():
@@ -79,6 +79,7 @@ setup(name='asiaq',
         "bin/disco_chaos.py",
         "bin/disco_snapshot.py",
         "bin/disco_elasticsearch.py",
+        "bin/disco_ssm.py",
         "jenkins/bake_common.sh",
         "jenkins/bake_all_phase1.sh",
         "jenkins/bake_all_phase2.sh",
@@ -94,8 +95,10 @@ setup(name='asiaq',
                                             "../jenkins/base_boto.cfg", "../jenkins/base_aws.config"] },
     install_requires=get_requirements(),
     test_suite = 'nose.collector',
-    entry_points="""
-        [paste.app_factory]
-        main=disco_aws_automation:main
-    """,
+    entry_points={
+        'console_scripts': [
+            'asiaq_sandbox = %s.asiaq_cli:sandbox_command' % MODULE_NAME,
+            'asiaq = %s.asiaq_cli:super_command' % MODULE_NAME
+        ]
+    },
 )

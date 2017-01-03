@@ -9,6 +9,8 @@ from boto.route53.record import Record
 
 from disco_aws_automation.resource_helper import throttled_call
 
+logger = logging.getLogger(__name__)
+
 
 class DiscoRoute53(object):
     """
@@ -36,7 +38,7 @@ class DiscoRoute53(object):
         record = Record(record_name, record_type, ttl=5)
         record.add_value(value)
 
-        logging.info("Setting Record %s of type %s to %s", record_name, record_type, value)
+        logger.info("Setting Record %s of type %s to %s", record_name, record_type, value)
 
         changes = throttled_call(self.route53.get_all_rrsets, zone.id)
         changes.add_change_record('UPSERT', record)
@@ -67,8 +69,8 @@ class DiscoRoute53(object):
         selected_record = next((record for record in records
                                 if record.name == record_name and record.type == record_type), None)
         if not selected_record:
-            logging.info("Record '%s' in '%s' hosted zone does not exist. Nothing to delete",
-                         record_name, hosted_zone_name)
+            logger.info("Record '%s' in '%s' hosted zone does not exist. Nothing to delete",
+                        record_name, hosted_zone_name)
             return
         records.add_change_record('DELETE', selected_record)
         throttled_call(records.commit)
@@ -80,7 +82,7 @@ class DiscoRoute53(object):
             record_type (str): the type of record (A, AAAA, CNAME, etc)
             value: the value to search for
         """
-        logging.info('Deleting %s records with value "%s"', record_type, value)
+        logger.info('Deleting %s records with value "%s"', record_type, value)
         for record in self.get_records_by_value(record_type, value):
             self.delete_record(record['zone_name'], record['record_name'], record_type)
 

@@ -23,10 +23,12 @@ import socket
 
 from docopt import docopt
 
-from disco_aws_automation import DiscoAWS, read_config
+from disco_aws_automation import DiscoAWS
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_aws_util import run_gracefully, EasyExit
 from disco_aws_automation.disco_logging import configure_logging
 
+logger = logging.getLogger(__name__)
 
 SSH_OPTIONS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=7"
 
@@ -57,7 +59,7 @@ class DiscoSSH(object):
     def instances(self):
         """Lazily fetches all instances in the environment"""
         if not self._instances:
-            logging.info("Fetching info about instances in %s", self.env)
+            logger.info("Fetching info about instances in %s", self.env)
             self._instances = self.aws().instances()
         return self._instances
 
@@ -83,7 +85,7 @@ class DiscoSSH(object):
         elif self.pick_instance:
             if len(hostclasses) != 1:
                 raise EasyExit("Matched instances from multiple hostclasses: %s" % ", ".join(hostclasses))
-            logging.info("Matched instances %s: connecting to %s", ", ".join(names), names[0])
+            logger.info("Matched instances %s: connecting to %s", ", ".join(names), names[0])
             return matched_instances[0]
         else:
             raise EasyExit("Too many instances matched: %s" % ", ".join(names))
@@ -92,7 +94,7 @@ class DiscoSSH(object):
         """Returns True if we can connect to port 22 at the given ip address"""
         if not ip_address:
             return False
-        logging.info("Probing %s", ip_address)
+        logger.info("Probing %s", ip_address)
         try:
             sock = socket.create_connection((ip_address, 22), timeout=2)
             sock.close()
@@ -112,7 +114,7 @@ class DiscoSSH(object):
         if not instance:
             raise EasyExit("No instances in the {} environment matched '{}'".format(self.env, host))
 
-        logging.info("Detecting best route to %s", instance.tags.get("hostname"))
+        logger.info("Detecting best route to %s", instance.tags.get("hostname"))
 
         if self.is_reachable(instance.ip_address):  # ip_address is actually the public ip address (or None)
             return [instance.ip_address]
@@ -121,7 +123,7 @@ class DiscoSSH(object):
             if self.is_reachable(interface.private_ip_address):
                 return [interface.private_ip_address]
 
-        logging.info("No direct route. Trying jump host.")
+        logger.info("No direct route. Trying jump host.")
         jump_host_ip = self.aws().find_jump_address()
         if not jump_host_ip:
             raise EasyExit("No direct route to host and no jump host in {}".format(self.env))
@@ -143,7 +145,7 @@ class DiscoSSH(object):
 
         ips = self.detect_best_route(host)
         cmd = self.build_ssh_cmd(ips)
-        logging.info("Now ssh-ing: %s", cmd)
+        logger.info("Now ssh-ing: %s", cmd)
         os.system(cmd)
 
 if __name__ == "__main__":

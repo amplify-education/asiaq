@@ -15,6 +15,8 @@ from boto.exception import S3ResponseError
 from .disco_creds import DiscoS3Bucket, SSH_PRIVATE_KEY_BUCKET_PREFIX
 from .exceptions import CommandError
 
+logger = logging.getLogger(__name__)
+
 SSH_DEFAULT_OPTIONS = ["-oBatchMode=yes", "-oStrictHostKeyChecking=no", '-oUserKnownHostsFile=/dev/null']
 
 
@@ -37,7 +39,7 @@ class DiscoRemoteExec(object):
             s3_bucket = DiscoS3Bucket(bucket_name)
         except S3ResponseError:
             # It is ok if the keys don't exist, but log something to debug
-            logging.info("Found no ssh keys at %s", SSH_PRIVATE_KEY_BUCKET_PREFIX)
+            logger.info("Found no ssh keys at %s", SSH_PRIVATE_KEY_BUCKET_PREFIX)
             return
 
         for key in s3_bucket.listkeys(SSH_PRIVATE_KEY_BUCKET_PREFIX):
@@ -48,9 +50,9 @@ class DiscoRemoteExec(object):
                 os.chmod(keyfile, os.stat(keyfile).st_mode & (stat.S_IREAD | stat.S_IWRITE))
                 if os.system("ssh-add {0} 2> /dev/null".format(keyfile)) != 0:
                     raise CommandError("Failed to add {0} key".format(keyfile))
-                logging.debug("Added ssh key %s", key)
+                logger.debug("Added ssh key %s", key)
             except S3ResponseError:
-                logging.info("Failed to add ssh key %s", key)
+                logger.info("Failed to add ssh key %s", key)
 
     @staticmethod
     def add_ssh_keys(credential_buckets):
@@ -67,7 +69,7 @@ class DiscoRemoteExec(object):
 
             # Add keys from each of our credential buckets
             for bucket_name in credential_buckets:
-                logging.debug("Adding keys from %s", bucket_name)
+                logger.debug("Adding keys from %s", bucket_name)
                 DiscoRemoteExec.add_ssh_keys_in_bucket(tempdir, bucket_name)
 
         finally:
@@ -96,7 +98,7 @@ class DiscoRemoteExec(object):
         command = DiscoRemoteExec._get_remote_exec_command(address, remote_command, user,
                                                            jump_address if use_jump_address else None,
                                                            ssh_options, forward_agent)
-        logging.debug("command: %s", command)
+        logger.debug("command: %s", command)
 
         # output subprocess into a file to bypass pipe buffer size limitation,
         # which might cause subprocess hanging, see
@@ -109,10 +111,10 @@ class DiscoRemoteExec(object):
             process.communicate(stdin)
             output.seek(0)
             stdout = output.read()
-            logging.debug(stdout)
+            logger.debug(stdout)
             if (not nothrow) and (process.returncode != 0):
                 if log_on_error:
-                    logging.error(stdout)
+                    logger.error(stdout)
                 raise CommandError("command: {0} returned {1}".format(
                     " ".join(command), process.returncode))
             return (process.returncode, stdout)
@@ -179,13 +181,13 @@ class DiscoRemoteExec(object):
 
         local_command.append(source)
         local_command.append(full_destination)
-        logging.debug("command: %s", local_command)
+        logger.debug("command: %s", local_command)
 
         # Try syncing with filter flag if we get syntax error assume its not
         # supported, then try without it.
         rsync_exit_code = DiscoRemoteExec._call_rsync(local_command + ["--filter=:e /.nosync"])
         if rsync_exit_code == 1:
-            logging.debug("rsync failed due to 'Syntax or usage error.' Attempting without filter.")
+            logger.debug("rsync failed due to 'Syntax or usage error.' Attempting without filter.")
             rsync_exit_code = DiscoRemoteExec._call_rsync(local_command)
         if (not nothrow) and (rsync_exit_code != 0):
             raise CommandError("command: rsync of {0} to {1} on {2} failed with exit code {3}".format(
@@ -205,7 +207,7 @@ class DiscoRemoteExec(object):
         """Returns True if we can connect to port 22 at the given ip address"""
         if not ip_address:
             return False
-        logging.info("Probing %s", ip_address)
+        logger.info("Probing %s", ip_address)
         try:
             sock = socket.create_connection((ip_address, 22), timeout=2)
             sock.close()

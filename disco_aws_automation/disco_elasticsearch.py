@@ -4,21 +4,23 @@ Manage AWS ElasticSearch
 import logging
 import time
 import json
-from ConfigParser import NoOptionError
 
 import boto3
 
 from boto3.exceptions import Boto3Error
 from botocore.exceptions import BotoCoreError
-from . import read_config
+from .disco_config import read_config
 from .disco_route53 import DiscoRoute53
 from .resource_helper import throttled_call
 from .disco_aws_util import is_truthy
-from .disco_constants import DEFAULT_CONFIG_SECTION, VPC_CONFIG_FILE
+from .disco_constants import (
+    VPC_CONFIG_FILE,
+    ES_CONFIG_FILE
+)
 from .disco_alarm import DiscoAlarm
 from .disco_alarm_config import DiscoAlarmsConfig
 
-CONFIG_FILE = "disco_elasticsearch.ini"
+logger = logging.getLogger(__name__)
 
 
 class DiscoElasticsearch(object):
@@ -28,9 +30,9 @@ class DiscoElasticsearch(object):
 
     def __init__(self, environment_name, config_aws=None, config_es=None,
                  config_vpc=None, route53=None, alarms=None):
-        self.config_aws = config_aws or read_config()
+        self.config_aws = config_aws or read_config(environment=environment_name)
         self.config_vpc = config_vpc or read_config(VPC_CONFIG_FILE)
-        self.config_es = config_es or read_config(CONFIG_FILE)
+        self.config_es = config_es or read_config(ES_CONFIG_FILE)
         self.route53 = route53 or DiscoRoute53()
 
         if environment_name:
@@ -80,7 +82,7 @@ class DiscoElasticsearch(object):
     def zone(self):
         """The current Route 53 zone"""
         if not self._zone:
-            self._zone = self.get_aws_option('domain_name')
+            self._zone = self.config_aws.get_asiaq_option('domain_name')
         return self._zone
 
     @property
@@ -140,12 +142,16 @@ class DiscoElasticsearch(object):
             environment_name = domain_name_components[-1]
             elasticsearch_name = "-".join(domain_name_components[1:-1])
             if prefix != "es":
-                logging.info("Could not parse ElasticSearch domain %s, expected format 'es-$name-$env'",
-                             domain_name)
+                logger.info(
+                    "Could not parse ElasticSearch domain %s, expected format 'es-$name-$env'",
+                    domain_name
+                )
                 continue
             if environment_name != self.environment_name:
-                logging.debug("ElasticSearch domain %s is associated with a different environment, ignoring",
-                              domain_name)
+                logger.debug(
+                    "ElasticSearch domain %s is associated with a different environment, ignoring",
+                    domain_name
+                )
                 continue
 
             domain_info = {}
@@ -165,7 +171,7 @@ class DiscoElasticsearch(object):
         """Add a Route 53 record for the given domain name"""
         # Wait until AWS attaches an endpoint to the ElasticSearch domain
         while not self.get_endpoint(domain_name):
-            logging.info('Waiting for ElasticSearch domain %s to finish being created', domain_name)
+            logger.info('Waiting for ElasticSearch domain %s to finish being created', domain_name)
             time.sleep(60)
 
         name = '{}.{}'.format(domain_name, self.zone)
@@ -273,17 +279,22 @@ class DiscoElasticsearch(object):
 
             # If no configuration was provided and the desired elasticsearch name isn't configured, ignore it
             if not es_config and desired_elasticsearch_name not in configured_elasticsearch_names:
-                logging.info("Cannot create or update unconfigured Elasticsearch domain %s", domain_name)
+                logger.info("Cannot create or update unconfigured Elasticsearch domain %s", domain_name)
                 continue
 
             # Get the latest elasticsearch config.
             desired_es_config = es_config or self._get_es_config(desired_elasticsearch_name)
 
             if desired_elasticsearch_name in all_elasticsearch_names:
-                logging.info('Updating ElasticSearch domain %s', domain_name)
+                try:
+                    del desired_es_config["ElasticsearchVersion"]
+                    logging.debug("Ignoring ElasticsearchVersion specification on update")
+                except KeyError:
+                    pass
+                logger.info('Updating ElasticSearch domain %s', domain_name)
                 throttled_call(self.conn.update_elasticsearch_domain_config, **desired_es_config)
             else:
-                logging.info('Creating ElasticSearch domain %s', domain_name)
+                logger.info('Creating ElasticSearch domain %s', domain_name)
                 throttled_call(self.conn.create_elasticsearch_domain, **desired_es_config)
 
             # Add the Route 53 entry
@@ -317,10 +328,10 @@ class DiscoElasticsearch(object):
         for elasticsearch_name in desired_elasticsearch_names:
             domain_name = self.get_domain_name(elasticsearch_name)
             if elasticsearch_name not in all_elasticsearch_names:
-                logging.info('ElasticSearch domain %s does not exist. Nothing to delete.', domain_name)
+                logger.info('ElasticSearch domain %s does not exist. Nothing to delete.', domain_name)
                 continue
 
-            logging.info('Deleting ElasticSearch domain %s', domain_name)
+            logger.info('Deleting ElasticSearch domain %s', domain_name)
             self._remove_route53(domain_name)
             throttled_call(self.conn.delete_elasticsearch_domain, DomainName=domain_name)
 
@@ -336,9 +347,10 @@ class DiscoElasticsearch(object):
         elasticsearch_names = []
 
         for section in self.config_es.sections():
-            environment_name, elasticsearch_name = section.split(":")
-            if environment_name == self.environment_name:
-                elasticsearch_names.append(elasticsearch_name)
+            if section != "defaults":
+                environment_name, elasticsearch_name = section.split(":")
+                if environment_name == self.environment_name:
+                    elasticsearch_names.append(elasticsearch_name)
 
         return elasticsearch_names
 
@@ -347,13 +359,12 @@ class DiscoElasticsearch(object):
         Create boto3 config for the ElasticSearch cluster.
         """
         es_cluster_config = {
-            'InstanceType': self.get_es_option_default('instance_type', elasticsearch_name,
-                                                       'm3.medium.elasticsearch'),
-            'InstanceCount': int(self.get_es_option_default('instance_count', elasticsearch_name, 1)),
-            'DedicatedMasterEnabled': is_truthy(self.get_es_option_default('dedicated_master',
-                                                                           elasticsearch_name, "False")),
-            'ZoneAwarenessEnabled': is_truthy(self.get_es_option_default('zone_awareness',
-                                                                         elasticsearch_name, "False"))
+            'InstanceType': self.get_es_option('instance_type', elasticsearch_name),
+            'InstanceCount': int(self.get_es_option('instance_count', elasticsearch_name)),
+            'DedicatedMasterEnabled': is_truthy(self.get_es_option('dedicated_master',
+                                                                   elasticsearch_name)),
+            'ZoneAwarenessEnabled': is_truthy(self.get_es_option('zone_awareness',
+                                                                 elasticsearch_name))
         }
 
         if es_cluster_config['DedicatedMasterEnabled']:
@@ -364,28 +375,28 @@ class DiscoElasticsearch(object):
             )
 
         ebs_option = {
-            'EBSEnabled': is_truthy(self.get_es_option_default('ebs_enabled', elasticsearch_name, "False"))
+            'EBSEnabled': is_truthy(self.get_es_option('ebs_enabled', elasticsearch_name))
         }
 
         if ebs_option['EBSEnabled']:
-            ebs_option['VolumeType'] = self.get_es_option_default('volume_type', elasticsearch_name,
-                                                                  'standard')
-            ebs_option['VolumeSize'] = int(self.get_es_option_default('volume_size', elasticsearch_name, 10))
+            ebs_option['VolumeType'] = self.get_es_option('volume_type', elasticsearch_name)
+            ebs_option['VolumeSize'] = int(self.get_es_option('volume_size', elasticsearch_name))
 
             if ebs_option['VolumeType'] == 'io1':
-                ebs_option['Iops'] = int(self.get_es_option_default('iops', elasticsearch_name, 1000))
+                ebs_option['Iops'] = int(self.get_es_option('iops', elasticsearch_name))
 
         snapshot_options = {
-            'AutomatedSnapshotStartHour': int(self.get_es_option_default('snapshot_start_hour',
-                                                                         elasticsearch_name, 5))
+            'AutomatedSnapshotStartHour': int(self.get_es_option('snapshot_start_hour',
+                                                                 elasticsearch_name))
         }
 
         domain_name = self.get_domain_name(elasticsearch_name)
 
         # Treat 'allowed_source_ips' as a space separated list of IP addresses and make it into a list
-        allowed_source_ips = self.get_es_option_default("allowed_source_ips", elasticsearch_name, "").split()
+        allowed_source_ips = self.get_es_option("allowed_source_ips", elasticsearch_name).split()
 
         config = {
+            'ElasticsearchVersion': self.get_es_option('version', elasticsearch_name),
             'DomainName': domain_name,
             'ElasticsearchClusterConfig': es_cluster_config,
             'EBSOptions': ebs_option,
@@ -401,47 +412,13 @@ class DiscoElasticsearch(object):
 
         if self.config_es.has_option(section, option):
             return self.config_es.get(section, option)
+        elif self.config_es.has_option('defaults', option):
+            # Get option from defaults section if it's not found in the cluster's section
+            return self.config_es.get('defaults', option)
 
-        raise NoOptionError(option, section)
-
-    def get_es_option_default(self, option, elasticsearch_name, default=None):
-        """Returns appropriate configuration for the current environment"""
-        try:
-            return self.get_es_option(option, elasticsearch_name)
-        except NoOptionError:
-            return default
-
-    def get_aws_option(self, option, section=DEFAULT_CONFIG_SECTION):
-        """Get a value from the config"""
-        env_option = "{0}@{1}".format(option, self.environment_name)
-        default_option = "default_{0}".format(option)
-        default_env_option = "default_{0}".format(env_option)
-
-        if self.config_aws.has_option(section, env_option):
-            return self.config_aws.get(section, env_option)
-        if self.config_aws.has_option(section, option):
-            return self.config_aws.get(section, option)
-        elif self.config_aws.has_option(DEFAULT_CONFIG_SECTION, default_env_option):
-            return self.config_aws.get(DEFAULT_CONFIG_SECTION, default_env_option)
-        elif self.config_aws.has_option(DEFAULT_CONFIG_SECTION, default_option):
-            return self.config_aws.get(DEFAULT_CONFIG_SECTION, default_option)
-
-        raise NoOptionError(option, section)
-
-    def get_aws_option_default(self, option, section=DEFAULT_CONFIG_SECTION, default=None):
-        """Get a value from the config"""
-        try:
-            return self.get_aws_option(option, section)
-        except NoOptionError:
-            return default
-
-    def get_hostclass_option(self, option, hostclass):
-        """Fetch a hostclass configuration option, if it does not exist get the default"""
-        return self.get_aws_option(option, hostclass)
-
-    def get_hostclass_option_default(self, option, hostclass, default=None):
-        """Fetch a hostclass configuration option, if it does not exist get the default"""
-        return self.get_aws_option_default(option, hostclass, default)
+        raise RuntimeError("Could not find option, %s, in either the %s and the defaults sections "
+                           "of the ElasticSearch config.",
+                           option, section)
 
     def _get_nat_eips(self):
         env_option = 'envtype:{}'.format(self.environment_name)

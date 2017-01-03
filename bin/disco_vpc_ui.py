@@ -4,7 +4,6 @@ Command line tool for creating and destroying VPC's
 """
 
 from __future__ import print_function
-import logging
 import argparse
 import sys
 
@@ -80,11 +79,11 @@ def parse_arguments():
 def create_vpc_command(args):
     """ handle vpc create command actions"""
     if DiscoVPC.fetch_environment(environment_name=args.vpc_name):
-        logging.error("VPC with same name already exists.")
+        print("VPC with same name already exists.")
         sys.exit(1)
     else:
         vpc = DiscoVPC(args.vpc_name, args.vpc_type)
-        logging.info("VPC %s(%s) has been created", args.vpc_name, vpc.get_vpc_id())
+        print("VPC {0}({1}) has been created".format(args.vpc_name, vpc.get_vpc_id()))
 
 
 def destroy_vpc_command(args):
@@ -97,7 +96,7 @@ def destroy_vpc_command(args):
     if vpc:
         vpc.destroy()
     else:
-        logging.error("No matching VPC found")
+        print("No matching VPC found")
         sys.exit(2)
 
 
@@ -111,7 +110,7 @@ def update_vpc_command(args):
     if vpc:
         vpc.update(args.dry_run)
     else:
-        logging.error("No matching VPC found")
+        print("No matching VPC found")
         sys.exit(2)
 
 
@@ -127,20 +126,23 @@ def list_vpc_command(args):
 def proxy_peerings_command(args):
     """ handle peerings command actions"""
     if args.vpc_name and args.vpc_id:
-        logging.error("Don't use vpc_name and vpc_id at the same time.")
+        print("Don't use vpc_name and vpc_id at the same time.")
         sys.exit(2)
 
+    vpc = None
     if args.vpc_name:
-        vpc_id = DiscoVPC.find_vpc_id_by_name(args.vpc_name)
+        vpc = DiscoVPC.fetch_environment(environment_name=args.vpc_name)
     elif args.vpc_id:
-        vpc_id = args.vpc_id
-    else:
-        vpc_id = None
+        vpc = DiscoVPC.fetch_environment(vpc_id=args.vpc_id)
+
+    vpc_id = vpc.get_vpc_id() if vpc else None
+
+    disco_peerings = DiscoVPCPeerings()
 
     if args.list_peerings:
         vpc_map = {vpc['id']: vpc for vpc in DiscoVPC.list_vpcs()}
         peerings = sorted(
-            DiscoVPCPeerings.list_peerings(vpc_id, include_failed=True),
+            disco_peerings.list_peerings(vpc_id, include_failed=True),
             key=lambda p: vpc_map.get(p['AccepterVpcInfo']['VpcId'])['tags'].get("Name"))
 
         for peering in peerings:
@@ -157,10 +159,9 @@ def proxy_peerings_command(args):
                     peering['RequesterVpcInfo'].get('CidrBlock')))
             print(line)
     elif args.delete_peerings:
-        DiscoVPCPeerings.delete_peerings(vpc_id)
+        disco_peerings.delete_peerings(vpc_id)
     elif args.create_peerings:
-        peering_configs = DiscoVPCPeerings.parse_peerings_config(vpc_id)
-        DiscoVPCPeerings.create_peering_connections(peering_configs)
+        disco_peerings.update_peering_connections(vpc)
 
 
 def run():

@@ -5,19 +5,21 @@ environments, and between an environment and the internet.  In particular non-VP
 """
 
 import logging
-import random
 
+import socket
 import time
 from ConfigParser import ConfigParser
 
 from boto.exception import EC2ResponseError
 import boto3
+from botocore.exceptions import ClientError
 
-from netaddr import IPNetwork, IPSet
+from netaddr import IPNetwork, IPAddress
+from netaddr.core import AddrFormatError
 
 from disco_aws_automation.disco_placement_group import DiscoPlacementGroup
-from disco_aws_automation.network_helper import calc_subnet_offset
-from . import normalize_path
+from disco_aws_automation.network_helper import calc_subnet_offset, get_random_free_subnet
+from .disco_config import normalize_path
 
 from .disco_alarm import DiscoAlarm
 from .disco_alarm_config import DiscoAlarmsConfig
@@ -33,10 +35,10 @@ from .disco_vpc_endpoints import DiscoVPCEndpoints
 from .disco_vpc_gateways import DiscoVPCGateways
 from .disco_vpc_peerings import DiscoVPCPeerings
 from .disco_vpc_sg_rules import DiscoVPCSecurityGroupRules
-from .resource_helper import (tag2dict, create_filters, keep_trying)
-from .exceptions import (
-    MultipleVPCsForVPCNameError, VPCConfigError, VPCEnvironmentError,
-    VPCNameNotFound)
+from .resource_helper import (tag2dict, create_filters, keep_trying, throttled_call)
+from .exceptions import (VPCConfigError, VPCEnvironmentError)
+
+logger = logging.getLogger(__name__)
 
 
 # FIXME: pylint thinks the file has too many instance arguments
@@ -46,7 +48,8 @@ class DiscoVPC(object):
     This class contains all our VPC orchestration code
     """
 
-    def __init__(self, environment_name, environment_type, vpc=None, config_file=None, boto3_ec2=None):
+    def __init__(self, environment_name, environment_type, vpc=None,
+                 config_file=None, boto3_ec2=None, defer_creation=False):
         self.config_file = config_file or VPC_CONFIG_FILE
 
         self.environment_name = environment_name
@@ -68,7 +71,7 @@ class DiscoVPC(object):
         self.elb = DiscoELB(vpc=self)
         self.disco_vpc_sg_rules = DiscoVPCSecurityGroupRules(vpc=self, boto3_ec2=self.boto3_ec2)
         self.disco_vpc_gateways = DiscoVPCGateways(vpc=self, boto3_ec2=self.boto3_ec2)
-        self.disco_vpc_peerings = DiscoVPCPeerings(vpc=self, boto3_ec2=self.boto3_ec2)
+        self.disco_vpc_peerings = DiscoVPCPeerings(boto3_ec2=self.boto3_ec2)
         self.elasticache = DiscoElastiCache(vpc=self)
         self.log_metrics = DiscoLogMetrics(environment=environment_name)
         self.placement_group = DiscoPlacementGroup(environment_name=environment_name)
@@ -79,8 +82,8 @@ class DiscoVPC(object):
 
         if vpc:
             self.vpc = vpc
-        else:
-            self._create_environment()
+        elif not defer_creation:
+            self.create()
 
     @property
     def config(self):
@@ -88,7 +91,9 @@ class DiscoVPC(object):
         if not self._config:
             try:
                 config = ConfigParser()
-                config.read(normalize_path(self.config_file))
+                config_file = normalize_path(self.config_file)
+                logger.info("Reading VPC config %s", config_file)
+                config.read(config_file)
                 self._config = config
             except Exception:
                 return None
@@ -144,7 +149,8 @@ class DiscoVPC(object):
     def region(self):
         """Region we're operating in"""
         if not self._region:
-            self._region = self.boto3_ec2.describe_availability_zones()['AvailabilityZones'][0]['RegionName']
+            response = throttled_call(self.boto3_ec2.describe_availability_zones)
+            self._region = response['AvailabilityZones'][0]['RegionName']
         return self._region
 
     @property
@@ -166,11 +172,15 @@ class DiscoVPC(object):
         """
         client = boto3.client('ec2')
         if vpc_id:
-            vpcs = client.describe_vpcs(
-                Filters=create_filters({'vpc-id': [vpc_id]}))['Vpcs']
+            vpcs = throttled_call(
+                client.describe_vpcs,
+                Filters=create_filters({'vpc-id': [vpc_id]})
+            )['Vpcs']
         elif environment_name:
-            vpcs = client.describe_vpcs(
-                Filters=create_filters({'tag:Name': [environment_name]}))['Vpcs']
+            vpcs = throttled_call(
+                client.describe_vpcs,
+                Filters=create_filters({'tag:Name': [environment_name]})
+            )['Vpcs']
         else:
             raise VPCEnvironmentError("Expect vpc_id or environment_name")
 
@@ -234,7 +244,7 @@ class DiscoVPC(object):
         for network_name, cidr in networks.iteritems():
             # pick a random ip range if there isn't one configured for the network in the config
             if cidr == 'auto':
-                cidr = DiscoVPC.get_random_free_subnet(self.vpc['CidrBlock'], meta_network_size, used_cidrs)
+                cidr = get_random_free_subnet(self.vpc['CidrBlock'], meta_network_size, used_cidrs)
 
                 if not cidr:
                     raise VPCConfigError("Can't create metanetwork %s. No subnets available", network_name)
@@ -249,7 +259,7 @@ class DiscoVPC(object):
         """ Return route tables corresponding to instance """
         rt_filters = self.vpc_filters()
         rt_filters.extend(create_filters({'route.instance-id': [instance.id]}))
-        return self.boto3_ec2.describe_route_tables(Filters=rt_filters)['RouteTables']
+        return throttled_call(self.boto3_ec2.describe_route_tables, Filters=rt_filters)['RouteTables']
 
     def delete_instance_routes(self, instance):
         """ Delete all routes associated with instance """
@@ -257,42 +267,119 @@ class DiscoVPC(object):
         for route_table in route_tables:
             for route in route_table.routes:
                 if route.instance_id == instance.id:
-                    self.boto3_ec2.delete_route(
-                        RouteTableId=route_table.id,
-                        DestinationCidrBlock=route.destination_cidr_block)
+                    throttled_call(self.boto3_ec2.delete_route,
+                                   RouteTableId=route_table.id,
+                                   DestinationCidrBlock=route.destination_cidr_block)
 
-    def _configure_dhcp(self):
+    def _get_ntp_server_config(self):
+        ntp_servers = []
+        ntp_server_config = self.get_config("ntp_server")
+        if ntp_server_config:
+            for ntp_server in ntp_server_config.split():
+                if self._is_valid_ip(ntp_server):
+                    ntp_servers.append(ntp_server)
+                else:
+                    ntp_server_ip = socket.gethostbyname(ntp_server)
+                    ntp_servers.append(ntp_server_ip)
+        else:
+            ntp_server_metanetwork = self.get_config("ntp_server_metanetwork")
+            ntp_server_offset = self.get_config("ntp_server_offset")
+            if ntp_server_metanetwork and ntp_server_offset:
+                ntp_servers.append(str(
+                    self.networks[ntp_server_metanetwork].ip_by_offset(ntp_server_offset)))
+
+        return ntp_servers if ntp_servers else None
+
+    def _is_valid_ip(self, ip_str):
+        try:
+            IPAddress(ip_str)
+            return True
+        except AddrFormatError:
+            return False
+
+    def _update_dhcp_options(self, dry_run=False):
+        desired_dhcp_options = self._get_dhcp_configs()
+        logger.info("Desired DHCP options: %s", desired_dhcp_options)
+
+        try:
+            existing_dhcp_options = throttled_call(
+                self.boto3_ec2.describe_dhcp_options,
+                DhcpOptionsIds=[self.vpc['DhcpOptionsId']],
+                Filters=[{'Name': 'tag:Name', 'Values': [self.environment_name]}]
+            )['DhcpOptions'][0]['DhcpConfigurations']
+
+        except (IndexError, ClientError):
+            existing_dhcp_options = []
+
+        for option in existing_dhcp_options:
+            option['Values'] = [value['Value'] for value in option['Values']]
+
+        logger.info("Existing DHCP options: %s", existing_dhcp_options)
+
+        if not dry_run and not self._same_dhcp_options(desired_dhcp_options, existing_dhcp_options):
+            created_dhcp_options = self._create_dhcp_options(desired_dhcp_options)
+
+            if existing_dhcp_options:
+                logger.info('Deleting existing DHCP options: %s', self.vpc['DhcpOptionsId'])
+                throttled_call(self.boto3_ec2.delete_dhcp_options,
+                               DhcpOptionsId=self.vpc['DhcpOptionsId'])
+
+            self.vpc['DhcpOptionsId'] = created_dhcp_options['DhcpOptionsId']
+
+    def _same_dhcp_options(self, desired_options, existing_options):
+        desired_optns_dict = dict([(option_dict['Key'], option_dict['Values'])
+                                   for option_dict in desired_options])
+
+        existing_optns_dict = dict([(option_dict['Key'], option_dict['Values'])
+                                    for option_dict in existing_options])
+
+        return desired_optns_dict == existing_optns_dict
+
+    def _get_dhcp_configs(self):
         internal_dns = self.get_config("internal_dns")
         external_dns = self.get_config("external_dns")
         domain_name = self.get_config("domain_name")
-
-        ntp_server = self.get_config("ntp_server")
-        if not ntp_server:
-            ntp_server_metanetwork = self.get_config("ntp_server_metanetwork")
-            ntp_server_offset = self.get_config("ntp_server_offset")
-            ntp_server = str(
-                self.networks[ntp_server_metanetwork].ip_by_offset(ntp_server_offset))
 
         # internal_dns server should be default, and for this reason it comes last.
         dhcp_configs = []
         dhcp_configs.append({"Key": "domain-name", "Values": [domain_name]})
         dhcp_configs.append({"Key": "domain-name-servers", "Values": [internal_dns, external_dns]})
-        dhcp_configs.append({"Key": "ntp-servers", "Values": [ntp_server]})
 
-        dhcp_options = self.boto3_ec2.create_dhcp_options(DhcpConfigurations=dhcp_configs)['DhcpOptions']
-        self.boto3_ec2.create_tags(Resources=[dhcp_options['DhcpOptionsId']],
-                                   Tags=[{'Key': 'Name', 'Value': self.environment_name}])
+        ntp_servers = self._get_ntp_server_config()
+        if ntp_servers:
+            dhcp_configs.append({"Key": "ntp-servers", "Values": ntp_servers})
 
-        dhcp_options = self.boto3_ec2.describe_dhcp_options(
-            DhcpOptionsIds=[dhcp_options['DhcpOptionsId']]
+        return dhcp_configs
+
+    def _create_dhcp_options(self, desired_dhcp_options):
+
+        created_dhcp_options = throttled_call(
+            self.boto3_ec2.create_dhcp_options,
+            DhcpConfigurations=desired_dhcp_options
         )['DhcpOptions']
 
-        if len(dhcp_options) == 0:
+        keep_trying(
+            60,
+            self.boto3_ec2.create_tags,
+            Resources=[created_dhcp_options['DhcpOptionsId']],
+            Tags=[{'Key': 'Name', 'Value': self.environment_name}]
+        )
+
+        created_dhcp_options = throttled_call(
+            self.boto3_ec2.describe_dhcp_options,
+            DhcpOptionsIds=[created_dhcp_options['DhcpOptionsId']]
+        )['DhcpOptions']
+
+        if len(created_dhcp_options) == 0:
             raise RuntimeError("Failed to find DHCP options after creation.")
 
-        return dhcp_options[0]
+        throttled_call(self.boto3_ec2.associate_dhcp_options,
+                       DhcpOptionsId=created_dhcp_options[0]['DhcpOptionsId'],
+                       VpcId=self.vpc['VpcId'])
 
-    def _create_environment(self):
+        return created_dhcp_options[0]
+
+    def create(self):
 
         """Create a new disco style environment VPC"""
         vpc_cidr = self.get_config("vpc_cidr")
@@ -309,41 +396,39 @@ class DiscoVPC(object):
             # get the cidr for all other VPCs so we can avoid overlapping with other VPCs
             occupied_network_cidrs = [vpc['cidr_block'] for vpc in self.list_vpcs()]
 
-            vpc_cidr = DiscoVPC.get_random_free_subnet(ip_space, int(vpc_size), occupied_network_cidrs)
+            vpc_cidr = get_random_free_subnet(ip_space, int(vpc_size), occupied_network_cidrs)
 
             if vpc_cidr is None:
                 raise VPCConfigError('Cannot create VPC %s. No subnets available' % self.environment_name)
 
         # Create VPC
-        self.vpc = self.boto3_ec2.create_vpc(CidrBlock=str(vpc_cidr))['Vpc']
+        self.vpc = throttled_call(self.boto3_ec2.create_vpc, CidrBlock=str(vpc_cidr))['Vpc']
         waiter = self.boto3_ec2.get_waiter('vpc_available')
         waiter.wait(VpcIds=[self.vpc['VpcId']])
         ec2 = boto3.resource('ec2')
         vpc = ec2.Vpc(self.vpc['VpcId'])
         tags = vpc.create_tags(Tags=[{'Key': 'Name', 'Value': self.environment_name},
                                      {'Key': 'type', 'Value': self.environment_type}])
-        logging.debug("vpc: %s", self.vpc)
-        logging.debug("vpc tags: %s", tags)
+        logger.debug("vpc: %s", self.vpc)
+        logger.debug("vpc tags: %s", tags)
 
         # Enable DNS
-        self.boto3_ec2.modify_vpc_attribute(
-            VpcId=self.vpc['VpcId'], EnableDnsSupport={'Value': True})
-        self.boto3_ec2.modify_vpc_attribute(
-            VpcId=self.vpc['VpcId'], EnableDnsHostnames={'Value': True})
+        throttled_call(self.boto3_ec2.modify_vpc_attribute,
+                       VpcId=self.vpc['VpcId'], EnableDnsSupport={'Value': True})
+        throttled_call(self.boto3_ec2.modify_vpc_attribute,
+                       VpcId=self.vpc['VpcId'], EnableDnsHostnames={'Value': True})
 
         self._networks = self._create_new_meta_networks()
 
-        dhcp_options = self._configure_dhcp()
-        self.boto3_ec2.associate_dhcp_options(DhcpOptionsId=dhcp_options['DhcpOptionsId'],
-                                              VpcId=self.vpc['VpcId'])
+        self._update_dhcp_options()
 
         self.disco_vpc_sg_rules.update_meta_network_sg_rules()
         self.disco_vpc_gateways.update_gateways_and_routes()
         self.disco_vpc_gateways.update_nat_gateways_and_routes()
         self.disco_vpc_endpoints.update()
         self.configure_notifications()
-        self.disco_vpc_peerings.update_peering_connections()
-        self.rds.update_all_clusters_in_vpc()
+        self.disco_vpc_peerings.update_peering_connections(self)
+        self.rds.update_all_clusters_in_vpc(parallel=True)
 
     def configure_notifications(self, dry_run=False):
         """
@@ -351,7 +436,7 @@ class DiscoVPC(object):
         Note that topics are not deleted with the VPC, since that would require re-subscribing the members.
         """
         notifications = self.alarms_config.get_notifications()
-        logging.info("Desired alarms config: %s", notifications)
+        logger.info("Desired alarms config: %s", notifications)
         if not dry_run:
             DiscoSNS().update_sns_with_notifications(notifications, self.environment_name)
 
@@ -359,15 +444,14 @@ class DiscoVPC(object):
         """
         Assign EIP to an instance
         """
-        eip = self.boto3_ec2.describe_addresses(PublicIps=[eip_address])['Addresses'][0]
+        eip = throttled_call(self.boto3_ec2.describe_addresses, PublicIps=[eip_address])['Addresses'][0]
         try:
-            self.boto3_ec2.associate_address(
-                InstanceId=instance.id,
-                AllocationId=eip['AllocationId'],
-                AllowReassociation=allow_reassociation
-            )
+            throttled_call(self.boto3_ec2.associate_address,
+                           InstanceId=instance.id,
+                           AllocationId=eip['AllocationId'],
+                           AllowReassociation=allow_reassociation)
         except EC2ResponseError:
-            logging.exception("Skipping failed EIP association. Perhaps reassociation of EIP is not allowed?")
+            logger.exception("Skipping failed EIP association. Perhaps reassociation of EIP is not allowed?")
 
     def vpc_filters(self):
         """Filters used to get only the current VPC when filtering an AWS reply by 'vpc-id'"""
@@ -377,17 +461,19 @@ class DiscoVPC(object):
         """ Update the existing VPC """
         # Ignoring changes in CIDR for now at least
 
-        logging.info("Updating security group rules...")
+        logger.info("Updating DHCP options")
+        self._update_dhcp_options(dry_run)
+        logger.info("Updating security group rules...")
         self.disco_vpc_sg_rules.update_meta_network_sg_rules(dry_run)
-        logging.info("Updating gateway routes...")
+        logger.info("Updating gateway routes...")
         self.disco_vpc_gateways.update_gateways_and_routes(dry_run)
-        logging.info("Updating NAT gateways and routes...")
+        logger.info("Updating NAT gateways and routes...")
         self.disco_vpc_gateways.update_nat_gateways_and_routes(dry_run)
-        logging.info("Updating VPC S3 endpoints...")
+        logger.info("Updating VPC S3 endpoints...")
         self.disco_vpc_endpoints.update(dry_run=dry_run)
-        logging.info("Updating VPC peering connections...")
-        self.disco_vpc_peerings.update_peering_connections(dry_run)
-        logging.info("Updating alarm notifications...")
+        logger.info("Updating VPC peering connections...")
+        self.disco_vpc_peerings.update_peering_connections(self, dry_run, delete_extra_connections=True)
+        logger.info("Updating alarm notifications...")
         self.configure_notifications(dry_run)
 
     def destroy(self):
@@ -405,7 +491,7 @@ class DiscoVPC(object):
         self.disco_vpc_gateways.destroy_igw_and_detach_vgws()
         self._destroy_interfaces()
         self.disco_vpc_sg_rules.destroy()
-        DiscoVPCPeerings.delete_peerings(self.get_vpc_id())
+        self.disco_vpc_peerings.delete_peerings(self.get_vpc_id())
         self._destroy_subnets()
         self.disco_vpc_endpoints.delete()
         self._destroy_routes()
@@ -413,29 +499,31 @@ class DiscoVPC(object):
 
     def get_all_subnets(self):
         """ Returns a list of all the subnets in the current VPC """
-        return self.boto3_ec2.describe_subnets(Filters=self.vpc_filters())['Subnets']
+        return throttled_call(self.boto3_ec2.describe_subnets, Filters=self.vpc_filters())['Subnets']
 
     def _destroy_instances(self):
         """ Find all instances in vpc and terminate them """
         autoscale = DiscoAutoscale(environment_name=self.environment_name)
         autoscale.clean_groups(force=True)
+        reservations = throttled_call(self.boto3_ec2.describe_instances,
+                                      Filters=self.vpc_filters())['Reservations']
         instances = [i['InstanceId']
-                     for r in self.boto3_ec2.describe_instances(Filters=self.vpc_filters())['Reservations']
+                     for r in reservations
                      for i in r['Instances']]
 
         if not instances:
-            logging.debug("No running instances")
+            logger.debug("No running instances")
             return
-        logging.debug("terminating %s instance(s) %s", len(instances), instances)
+        logger.debug("terminating %s instance(s) %s", len(instances), instances)
 
-        self.boto3_ec2.terminate_instances(InstanceIds=instances)
+        throttled_call(self.boto3_ec2.terminate_instances, InstanceIds=instances)
 
         waiter = self.boto3_ec2.get_waiter('instance_terminated')
         waiter.wait(InstanceIds=instances,
                     Filters=create_filters({'instance-state-name': ['terminated']}))
         autoscale.clean_configs()
 
-        logging.debug("waiting for instance shutdown scripts")
+        logger.debug("waiting for instance shutdown scripts")
         time.sleep(60)  # see http://copperegg.com/hooking-into-the-aws-shutdown-flow/
 
     def _destroy_rds(self, wait=True):
@@ -444,30 +532,35 @@ class DiscoVPC(object):
 
     def _destroy_interfaces(self):
         """ Deleting interfaces explicitly lets go of subnets faster """
-        def _destroy():
-            for interface in self.boto3_ec2.describe_network_interfaces(
-                    Filters=self.vpc_filters())["NetworkInterfaces"]:
 
-                self.boto3_ec2.delete_network_interface(NetworkInterfaceId=interface['NetworkInterfaceId'])
+        def _destroy():
+            interfaces = throttled_call(self.boto3_ec2.describe_network_interfaces,
+                                        Filters=self.vpc_filters())["NetworkInterfaces"]
+            for interface in interfaces:
+                throttled_call(self.boto3_ec2.delete_network_interface,
+                               NetworkInterfaceId=interface['NetworkInterfaceId'])
 
         # Keep trying because delete could fail for reasons based on interface's state
         keep_trying(600, _destroy)
 
     def _destroy_subnets(self):
         """ Find all subnets belonging to a vpc and destroy them"""
-        for subnet in self.boto3_ec2.describe_subnets(Filters=self.vpc_filters())['Subnets']:
-            self.boto3_ec2.delete_subnet(SubnetId=subnet['SubnetId'])
+        subnets = throttled_call(self.boto3_ec2.describe_subnets, Filters=self.vpc_filters())['Subnets']
+        for subnet in subnets:
+            throttled_call(self.boto3_ec2.delete_subnet, SubnetId=subnet['SubnetId'])
 
     def _destroy_routes(self):
         """ Find all route_tables belonging to vpc and destroy them"""
-        for route_table in self.boto3_ec2.describe_route_tables(Filters=self.vpc_filters())['RouteTables']:
+        routes = throttled_call(self.boto3_ec2.describe_route_tables,
+                                Filters=self.vpc_filters())['RouteTables']
+        for route_table in routes:
             if len(route_table["Associations"]) > 0 and route_table["Associations"][0]["Main"]:
-                logging.info("Skipping the default main route table %s", route_table['RouteTableId'])
+                logger.info("Skipping the default main route table %s", route_table['RouteTableId'])
                 continue
             try:
-                self.boto3_ec2.delete_route_table(RouteTableId=route_table['RouteTableId'])
+                throttled_call(self.boto3_ec2.delete_route_table, RouteTableId=route_table['RouteTableId'])
             except EC2ResponseError:
-                logging.error("Error deleting route_table %s:.", route_table['RouteTableId'])
+                logger.error("Error deleting route_table %s:.", route_table['RouteTableId'])
                 raise
 
     def _destroy_vpc(self):
@@ -476,60 +569,25 @@ class DiscoVPC(object):
         # save function and parameters so we can delete dhcp_options after vpc.
         dhcp_options_id = self.vpc['DhcpOptionsId']
 
-        self.boto3_ec2.delete_vpc(VpcId=self.get_vpc_id())
+        throttled_call(self.boto3_ec2.delete_vpc, VpcId=self.get_vpc_id())
         self.vpc = None
 
-        dhcp_options = self.boto3_ec2.describe_dhcp_options(
-            DhcpOptionsIds=[dhcp_options_id])['DhcpOptions']
+        dhcp_options = throttled_call(self.boto3_ec2.describe_dhcp_options,
+                                      DhcpOptionsIds=[dhcp_options_id])['DhcpOptions']
         # If DHCP options didn't get created correctly during VPC creation, what we have here
         # could be the default DHCP options, which cannot be deleted. We need to check the tag
         # to make sure we are deleting the one that belongs to the VPC.
         if len(dhcp_options) > 0:
             tags = tag2dict(dhcp_options[0]['Tags'])
             if tags['Name'] == self.environment_name:
-                self.boto3_ec2.delete_dhcp_options(DhcpOptionsId=dhcp_options_id)
-
-    @staticmethod
-    def find_vpc_id_by_name(vpc_name):
-        """Find VPC by name"""
-        client = boto3.client('ec2')
-        vpcs = client.describe_vpcs(Filters=create_filters({'tag:Name': [vpc_name]}))['Vpcs']
-        if len(vpcs) == 1:
-            return vpcs[0]['VpcId']
-        elif len(vpcs) == 0:
-            raise VPCNameNotFound("No VPC is named as {}".format(vpc_name))
-        else:
-            raise MultipleVPCsForVPCNameError("More than 1 VPC is named as {}".format(vpc_name))
+                throttled_call(self.boto3_ec2.delete_dhcp_options, DhcpOptionsId=dhcp_options_id)
 
     @staticmethod
     def list_vpcs():
         """Returns list of boto.vpc.vpc.VPC classes, one for each existing VPC"""
         client = boto3.client('ec2')
-        vpcs = client.describe_vpcs()
+        vpcs = throttled_call(client.describe_vpcs)
         return [{'id': vpc['VpcId'],
                  'tags': tag2dict(vpc['Tags'] if 'Tags' in vpc else None),
                  'cidr_block': vpc['CidrBlock']}
                 for vpc in vpcs['Vpcs']]
-
-    @staticmethod
-    def get_random_free_subnet(network_cidr, network_size, occupied_network_cidrs):
-        """
-        Pick a random available subnet from a bigger network
-        Args:
-            network_cidr (str): CIDR string describing a network
-            network_size (int): The number of bits for the CIDR of the subnet
-            occupied_network_cidrs (List[str]): List of CIDR strings describing existing networks
-                                                to avoid overlapping with
-
-        Returns str: The CIDR of a randomly chosen subnet that doesn't intersect with
-                     the ip ranges of any of the given other networks
-        """
-        possible_subnets = IPNetwork(network_cidr).subnet(int(network_size))
-        occupied_networks = [IPSet(IPNetwork(cidr)) for cidr in occupied_network_cidrs]
-
-        # find the subnets that don't overlap with any other networks
-        available_subnets = [subnet for subnet in possible_subnets
-                             if all([IPSet(subnet).isdisjoint(occupied_network)
-                                     for occupied_network in occupied_networks])]
-
-        return random.choice(available_subnets) if available_subnets else None

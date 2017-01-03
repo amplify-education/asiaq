@@ -13,11 +13,13 @@ import pwd
 import grp
 import subprocess
 
+logger = logging.getLogger(__name__)
+
 HOSTCLASS_FILE_PATH = "/opt/wgen/etc/hostclass"
 METADATA_FILE_NAME = "acfg.metadata"
 
 
-def copy_tree(source, destination, dryrun=False):
+def copy_tree(source, destination, hostclasses=None, dryrun=False):
     """Copies a file tree rooted at source to destination.
     Files that contain '~' are only copied if string after ~ matches hostclass and files
     not containing '~' are only copied if a hostclass specific version does not exist.
@@ -27,24 +29,33 @@ def copy_tree(source, destination, dryrun=False):
     and hostclass string after it. Permissions and file ownership are applied from
     source/METADATA_FILE_NAME, if it exists.
 
+    For special cases (e.g. operating-system specific phase1 files), hostclasses may instead
+    be passed as a list in the `hostclassses` argument.  If this argument is present, the content
+    of the hostclass file is ignored, and the passed-in list is used as a priority-ordered list of
+    virtual hostclasses to find the files for (so if the list is ['centos6_phase1', 'mhcgeneric'],
+    files and permissions marked with either of those hostclasses will be included, but in case of
+    conflict, 'centos6_phase1' will trump 'mhcgeneric').
+
     :param source:  the source tree root
     :param destination:  The destination tree root
+    :param hostclasses:  A priority-ordered list of hostclasses to use instead the one in HOSTCLASS_FILE_PATH
     :param dryrun:  If this is true copy_tree() will log as normal but not actually copy anything.
     :raise HostclassFileNotFound: if no hostclass file was found
     """
-    if os.path.exists(HOSTCLASS_FILE_PATH):
-        with open(HOSTCLASS_FILE_PATH) as hostclass_file:
-            hostclass = hostclass_file.readline().strip()
-            _copy_files(source, destination, hostclass, dryrun)
-            _apply_metadata(source, hostclass, dryrun)
-    else:
-        raise HostclassFileNotFound()
+    if not hostclasses:
+        if os.path.exists(HOSTCLASS_FILE_PATH):
+            with open(HOSTCLASS_FILE_PATH) as hostclass_file:
+                hostclasses = [hostclass_file.readline().strip()]
+        else:
+            raise HostclassFileNotFound()
+
+    _copy_files(source, destination, hostclasses, dryrun)
+    _apply_metadata(source, destination, hostclasses, dryrun)
 
 
-def _copy_files(source, destination, hostclass, dryrun=False):
+def _copy_files(source, destination, hostclasses, dryrun=False):
     # TODO Break this into smaller functions
-    # pylint: disable=R0914
-    magicsuffix = "~{0}".format(hostclass)
+    # pylint: disable=R0914,R0912
 
     for path, dirnames, filenames in os.walk(source):
         destpath = os.path.join(destination, os.path.relpath(path, source))
@@ -52,7 +63,7 @@ def _copy_files(source, destination, hostclass, dryrun=False):
         for dirname in dirnames:
             spath = os.path.join(path, dirname)
             dpath = os.path.join(destpath, dirname)
-            logging.info("make directory %s", dpath)
+            logger.info("make directory %s", dpath)
             if not dryrun:
                 if not os.path.isdir(dpath):
                     os.makedirs(dpath)
@@ -62,75 +73,103 @@ def _copy_files(source, destination, hostclass, dryrun=False):
         destinations = set()
         files = []
 
-        # Add the host specific files first
-        for filename in [f for f in filenames if f.endswith(magicsuffix)]:
-            src = os.path.join(path, filename)
-            dst = os.path.join(destpath, filename[0:-len(magicsuffix)])
-            sources |= set([src])
-            destinations |= set([dst])
-            files += [(src, dst)]
+        src_for_file = {}
+        for filename in filenames:
+            if filename == METADATA_FILE_NAME:
+                continue
+            (realname, _, hostclass) = filename.partition("~")
+            if hostclass and hostclass not in hostclasses:
+                # this file is not relevant
+                continue
+            if realname not in src_for_file:
+                src_for_file[realname] = filename
+            else:
+                (_, _, previous_hostclass) = src_for_file[realname].partition("~")
+                if _higher_priority(hostclass, previous_hostclass, hostclasses):
+                    src_for_file[realname] = filename
 
-        # Add generic files if they don't overwrite host specific files
-        for filename in [f for f in filenames if "~" not in f]:
-            src = os.path.join(path, filename)
-            dst = os.path.join(destpath, filename)
-            if dst not in destinations:
-                sources |= set([src])
-                destinations |= set([dst])
-                files += [(src, dst)]
+        # Add the host specific files first
+        for destname, srcname in src_for_file.items():
+            src = os.path.join(path, srcname)
+            dst = os.path.join(destpath, destname)
+            sources.add(src)
+            destinations.add(dst)
+            files += [(src, dst)]
 
         # Tell user what is being skipped
         for filename in filenames:
             src_file = os.path.join(path, filename)
             if src_file not in sources:
-                logging.info("skipping: %s", os.path.realpath(src_file))
+                logger.info("skipping: %s", os.path.realpath(src_file))
 
         # Tell user what is being copied, copy unless this is a dry run
         for (spath, dpath) in files:
-            logging.info("copying %s to %s", os.path.realpath(spath), dpath)
+            logger.info("copying %s to %s", os.path.realpath(spath), dpath)
             if not dryrun:
                 shutil.copy(spath, dpath)
 
 
-def _apply_metadata(source, hostclass, dryrun=False):
+def _apply_metadata(source, destination, hostclasses, dryrun=False):
     # Pylint thinks this function has too many local variables
     # pylint: disable=R0914
     metadata_file_path = os.path.join(source, METADATA_FILE_NAME)
     if not os.path.exists(metadata_file_path):
-        logging.warning("Metadata file not found: %s, no permissions to apply.", metadata_file_path)
+        logger.warning("Metadata file not found: %s, no permissions to apply.", metadata_file_path)
         return
 
-    magicsuffix = "~{0}".format(hostclass)
-
+    logger.info("Applying metadata from %s to files in %s", metadata_file_path, destination)
+    hostclass_for_path = {}
     with open(metadata_file_path, 'r') as metadata_file:
         for line in metadata_file.readlines():
             file_metadata = line.partition('#')[0].strip()  # ignore comments and blank lines
             if not file_metadata:
                 continue
             try:
-                filename, permissions, owner, group = file_metadata.split()
+                file_entry, permissions, owner, group = file_metadata.split()
             except Exception:
                 raise ValueError("Not enough values to unpack on line: {0}".format(file_metadata))
 
-            if "~" in filename:
-                if filename.endswith(magicsuffix):
-                    filename = filename[0:-len(magicsuffix)]
-                else:
-                    logging.info("skipping permissions: %s", filename)
-                    continue
+            (file_entry_path, _, hostclass) = file_entry.partition("~")
 
-            if not os.path.exists(filename):
-                logging.warning("skipping permissions (file not found): %s", filename)
+            if hostclass and hostclass not in hostclasses:
+                logger.info("skipping permissions: %s", file_entry)
                 continue
 
-            logging.info("setting ownership of %s to %s:%s", filename, owner, group)
+            # file_entry_path will be absolute: strip the leading slash, then look in the
+            # destination directory (which may be "/") for it.
+            filename = os.path.join(destination, file_entry_path[1:])
+            if not os.path.exists(filename):
+                logger.warning("skipping permissions (file not found): %s", filename)
+                continue
+
+            if filename not in hostclass_for_path:
+                hostclass_for_path[filename] = hostclass
+                logger.info("setting ownership of %s to %s:%s", filename, owner, group)
+            else:
+                if _higher_priority(hostclass, hostclass_for_path[filename], hostclasses):
+                    hostclass_for_path[filename] = hostclass
+                    logger.info("OVERRIDING ownership of %s to %s:%s", filename, owner, group)
+                else:
+                    logger.info("Skipping permissions from hostclass %s on %s", hostclass, filename)
+                    continue
+
             if not dryrun:
                 uid, gid = get_or_create_ids(owner, group)
                 os.chown(filename, uid, gid)
 
-            logging.info("setting permissions of %s to %s", filename, permissions)
+            logger.info("setting permissions of %s to %s", filename, permissions)
             if not dryrun:
                 os.chmod(filename, int(permissions, 8))
+
+
+def _higher_priority(new_hostclass, old_hostclass, all_hostclasses):
+    if new_hostclass:
+        if old_hostclass:
+            return all_hostclasses.index(new_hostclass) < all_hostclasses.index(old_hostclass)
+        else:
+            return True
+    else:
+        return False
 
 
 class HostclassFileNotFound(EnvironmentError):
@@ -152,15 +191,15 @@ def get_or_create_ids(username, groupname):
     try:
         gid = grp.getgrnam(groupname).gr_gid
     except KeyError:
-        logging.info("Creating group %s", groupname)
+        logger.info("Creating group %s", groupname)
         subprocess.call(['/usr/sbin/groupadd', '-f', groupname])
         gid = grp.getgrnam(groupname).gr_gid
     try:
         uid = pwd.getpwnam(username).pw_uid
     except KeyError:
-        logging.info("Creating user %s", username)
+        logger.info("Creating user %s", username)
         subprocess.call(['/usr/sbin/adduser',
-                         '--system',
+                         '-r',
                          '--gid', str(gid),
                          '--shell', '/sbin/nologin',
                          username])
@@ -171,16 +210,19 @@ def get_or_create_ids(username, groupname):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="""
     Tool for copying trees of files. Files that contain '~' are only copied if
-    string after ~ matches hostclass. The files will also be renamed,
-    stripping ~ and hostclass string after it. Permissions and file ownership
-    are applied from /metadata.txt at the root of the tree.
+    the string after ~ matches the hostclass (taken from command line options,
+    or from /opt/wgen/etc/hostclass if no option is supplied). The files will
+    also be renamed, stripping the "~somehostclass" suffix if present.
+    Permissions and file ownership are applied from the acfg.metadata file at
+    the root of the source tree.
     """)
     parser.add_argument("source", help="Source location overlay directory")
     parser.add_argument("destination", help="Destination of where to overlay source directory over")
     parser.add_argument('--dry', action='store_const', const=True, default=False, help='Dry run only')
+    parser.add_argument('--hostclass', action='append', dest='hostclasses', metavar='HOSTCLASS',
+                        help='A hostclass (possibly virtual) for which to select files. (Repeatable.)')
 
-    logger = logging.getLogger('')
     logger.setLevel(logging.INFO)
 
     args = parser.parse_args()
-    copy_tree(args.source, args.destination, args.dry)
+    copy_tree(args.source, args.destination, args.hostclasses, args.dry)

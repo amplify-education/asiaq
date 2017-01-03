@@ -7,8 +7,10 @@ from ConfigParser import ConfigParser
 
 import boto3
 
-from . import normalize_path
+from .disco_config import normalize_path
 from .resource_helper import throttled_call
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoLogMetrics(object):
@@ -50,7 +52,7 @@ class DiscoLogMetrics(object):
     def update(self, hostclass):
         """Recreate log metrics for a hostclass from config"""
         if not self.config:
-            logging.warning('DiscoLogMetrics config file is missing. Cannot update hostclass %s', hostclass)
+            logger.warning('DiscoLogMetrics config file is missing. Cannot update hostclass %s', hostclass)
             return
 
         self.delete_metrics(hostclass)
@@ -70,7 +72,7 @@ class DiscoLogMetrics(object):
             if log_group_name not in existing_log_group_names:
                 throttled_call(self.logs.create_log_group, logGroupName=log_group_name)
 
-            logging.info("Creating metric filter %s", metric_name)
+            logger.info("Creating metric filter %s", metric_name)
             throttled_call(self.logs.put_metric_filter,
                            logGroupName=log_group_name,
                            filterName=metric_name,
@@ -87,7 +89,7 @@ class DiscoLogMetrics(object):
         """Delete log metrics for a hostclass"""
         for log_group in self.list_log_groups(hostclass):
             for metric in self._get_metrics_for_log_group(log_group['logGroupName']):
-                logging.info("Deleting metric filter %s", metric['filterName'])
+                logger.info("Deleting metric filter %s", metric['filterName'])
                 throttled_call(self.logs.delete_metric_filter,
                                logGroupName=log_group['logGroupName'],
                                filterName=metric['filterName'])

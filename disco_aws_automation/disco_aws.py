@@ -39,7 +39,6 @@ from .disco_remote_exec import DiscoRemoteExec
 from .disco_storage import DiscoStorage
 from .disco_vpc import DiscoVPC
 from .resource_helper import (
-    TimeoutError,
     keep_trying,
     wait_for_state,
 )
@@ -49,7 +48,10 @@ from .exceptions import (
     SmokeTestError,
     CommandError,
     TimeoutError,
+    ProgrammerError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoAWS(object):
@@ -57,9 +59,15 @@ class DiscoAWS(object):
 
     # Too many arguments, but we want to mock a lot of things out, so...
     # pylint: disable=too-many-arguments
-    def __init__(self, config, environment_name, boto2_conn=None, vpc=None, remote_exec=None, storage=None,
-                 autoscale=None, elb=None, log_metrics=None, alarms=None, placement_group=None):
-        self.environment_name = environment_name
+    def __init__(self, config, environment_name=None, boto2_conn=None, vpc=None, remote_exec=None,
+                 storage=None, autoscale=None, elb=None, log_metrics=None, alarms=None, placement_group=None):
+
+        if not environment_name and not vpc:
+            raise ProgrammerError("Either 'vpc' or 'environment_name' must always be specified.")
+        elif environment_name:
+            self.environment_name = environment_name
+        else:
+            self.environment_name = vpc.environment_name
         self._config = config
         self._project_name = self._config.get("disco_aws", "project_name")
         self._connection = boto2_conn or None  # lazily initialized
@@ -83,7 +91,7 @@ class DiscoAWS(object):
     def disco_storage(self):
         """Lazily creates disco storage object"""
         if not self._disco_storage:
-            self._disco_storage = DiscoStorage(self.connection)
+            self._disco_storage = DiscoStorage(self.environment_name, self.connection)
         return self._disco_storage
 
     @property
@@ -209,7 +217,7 @@ class DiscoAWS(object):
         smoketest_termination = is_truthy(self.hostclass_option(hostclass, "smoketest_termination"))
         data["smoketest_termination"] = "1" if smoketest_termination else "0"
         data["project_name"] = self.config("project_name")
-        logging.debug("userdata: %s", data)
+        logger.debug("userdata: %s", data)
         return data
 
     @staticmethod
@@ -271,9 +279,9 @@ class DiscoAWS(object):
             for subnet_ip in subnet_ips.split(' '):
                 meta_network.get_interface(subnet_ip)
 
-    def create_scaling_schedule(self, hostclass, min_size, desired_size, max_size):
+    def create_scaling_schedule(self, min_size, desired_size, max_size, hostclass=None, group_name=None):
         """Create autoscaling schedule"""
-        self.autoscale.delete_all_recurring_group_actions(hostclass=hostclass)
+        self.autoscale.delete_all_recurring_group_actions(hostclass=hostclass, group_name=group_name)
         maps = [
             size_as_recurrence_map(min_size, sentinel=None),
             size_as_recurrence_map(desired_size, sentinel=None),
@@ -284,12 +292,14 @@ class DiscoAWS(object):
                         for time in times if time is not None}
         for recurrence, sizes in combined_map.items():
             self.autoscale.create_recurring_group_action(
-                str(recurrence), hostclass=hostclass,
+                str(recurrence), hostclass=hostclass, group_name=group_name,
                 min_size=sizes[0], desired_capacity=sizes[1], max_size=sizes[2])
 
     def _default_protocol_for_port(self, port):
         return {80: "HTTP", 443: "HTTPS"}.get(int(port)) or "TCP"
 
+    # Pylint thinks that we have too many local variables, but we needs them.
+    # pylint:  disable=too-many-locals
     def update_elb(self, hostclass, update_autoscaling=True, testing=False):
         '''Creates, Updates and Delete an ELB for a hostclass depending on current configuration'''
         if not is_truthy(self.hostclass_option_default(hostclass, "elb", "False")):
@@ -328,7 +338,21 @@ class DiscoAWS(object):
                 connection_draining_timeout=int(self.hostclass_option_default(hostclass,
                                                                               "elb_connection_draining",
                                                                               300)),
-                testing=testing
+                cert_name=self.hostclass_option_default(hostclass, "elb_cert_name"),
+                testing=testing,
+                tags={
+                    "hostclass": hostclass,
+                    "is_testing": "1" if testing else "0",
+                    "environment": self.environment_name,
+                    "productline": self.hostclass_option_default(hostclass, 'product_line', 'unknown')
+                },
+                cross_zone_load_balancing=is_truthy(
+                    self.hostclass_option_default(
+                        hostclass,
+                        "elb_cross_zone_load_balancing",
+                        "true"
+                    )
+                )
             )
 
         if update_autoscaling:
@@ -431,14 +455,14 @@ class DiscoAWS(object):
             placement_group=placement_group['GroupName'] if placement_group else None
         )
 
-        self.create_scaling_schedule(hostclass, min_size, desired_size, max_size)
+        self.create_scaling_schedule(min_size, desired_size, max_size, group_name=group.name)
 
         # Create alarms and custom metrics for the hostclass, if is not being used for testing
         if not testing:
             self.alarms.create_alarms(hostclass, group.name)
 
-        logging.info("Spun up %s instances of %s from %s into group %s",
-                     size_as_maximum_int_or_none(desired_size), hostclass, ami.id, group.name)
+        logger.info("Spun up %s instances of %s from %s into group %s",
+                    size_as_maximum_int_or_none(desired_size), hostclass, ami.id, group.name)
 
         return {
             "hostclass": hostclass,
@@ -460,7 +484,7 @@ class DiscoAWS(object):
         """
         Stop / terminate instances depending on value of terminate parameter.
         """
-        logging.debug("_stop: %s terminate=%s use_autoscaling=%s", instances, terminate, use_autoscaling)
+        logger.debug("_stop: %s terminate=%s use_autoscaling=%s", instances, terminate, use_autoscaling)
 
         instances = [i for i in instances if i.state != u'terminated']
         instance_ids = [i.id for i in instances]
@@ -472,12 +496,12 @@ class DiscoAWS(object):
                         self.autoscale.terminate(instance.id)
                 if not use_autoscaling:
                     self.connection.terminate_instances(instance_ids)
-                logging.info("terminated: %s", instances)
+                logger.info("terminated: %s", instances)
             else:
                 self.connection.stop_instances(instance_ids)
-                logging.info("stopped: %s", instances)
+                logger.info("stopped: %s", instances)
         else:
-            logging.info("No unterminated instances")
+            logger.info("No unterminated instances")
 
         return instances
 
@@ -569,13 +593,23 @@ class DiscoAWS(object):
 
     def instances_from_hostclasses(self, hostclasses):
         """Returns a flat list of all instances for a list of hostclasses"""
-        return [instance
-                for instance in self.instances()
-                if instance.tags.get("hostclass", "-") in hostclasses]
+        return [
+            instance
+            for instance in self.instances()
+            if instance.tags.get("hostclass", "-") in hostclasses
+        ]
 
     def instances_from_amis(self, ami_ids):
         """Returns instances matching any of a list of AMI ids"""
         return self.instances(filters={"image_id": ami_ids})
+
+    def instances_from_asgs(self, asgs):
+        """Returns instances matching any of a list of autoscaling group names"""
+        return [
+            instance
+            for instance in self.instances()
+            if instance.tags.get("aws:autoscaling:groupName", "-") in asgs
+        ]
 
     def spindown(self, hostclasses):
         """
@@ -621,9 +655,6 @@ class DiscoAWS(object):
               },
             ...]
         """
-
-        self.autoscale.clean_configs()
-
         # If AMI specified lookup hostclass from AMI else lookup AMI from hostclass
         stage = stage if stage else self.vpc.ami_stage()
         bake = DiscoBake(self._config, self.connection)
@@ -690,12 +721,12 @@ class DiscoAWS(object):
 
         while True:
             auto_instances = self.autoscale.get_instances()
-            logging.debug("yet_to_scale: %s", yet_to_scale)
+            logger.debug("yet_to_scale: %s", yet_to_scale)
             yet_to_scale = [gname for gname in yet_to_scale
                             if DiscoAWS._instance_count_lt_min_size(name_to_group[gname], auto_instances)]
             if not yet_to_scale or (time.time() >= max_time):
                 break
-            logging.info("Waiting for %s autoscaling groups to reach min_size", len(yet_to_scale))
+            logger.info("Waiting for %s autoscaling groups to reach min_size", len(yet_to_scale))
             time.sleep(AUTOSCALE_POLL_INTERVAL)
 
         if yet_to_scale:
@@ -704,8 +735,8 @@ class DiscoAWS(object):
                 .format(" ".join([gname for gname in yet_to_scale]), timeout))
 
         if metadata_list:
-            logging.info("Waited for %s autoscaling groups to reach min_size in %s seconds",
-                         len(metadata_list), int(0.5 + time.time() - start_time))
+            logger.info("Waited for %s autoscaling groups to reach min_size in %s seconds",
+                        len(metadata_list), int(0.5 + time.time() - start_time))
 
         instance_ids = [instance.instance_id for instance in auto_instances
                         if instance.group_name in group_names]
@@ -742,7 +773,7 @@ class DiscoAWS(object):
 
         while True:
             smokey = []
-            logging.debug("yet_to_pass: %s", yet_to_pass)
+            logger.debug("yet_to_pass: %s", yet_to_pass)
             for instance in yet_to_pass:
                 try:
                     self.smoketest_once(instance)
@@ -751,7 +782,7 @@ class DiscoAWS(object):
             yet_to_pass = smokey
             if not yet_to_pass or (time.time() >= max_time):
                 break
-            logging.info("Waiting for %s host[s] to pass smoke test", len(yet_to_pass))
+            logger.info("Waiting for %s host[s] to pass smoke test", len(yet_to_pass))
             time.sleep(SMOKETEST_POLL_INTERVAL)
 
         if yet_to_pass:
@@ -760,8 +791,8 @@ class DiscoAWS(object):
                 .format(" ".join([inst.id for inst in yet_to_pass]), timeout))
 
         if instance_list:
-            logging.info("Smoke tested %s host[s] in %s seconds",
-                         len(instance_list), int(0.5 + time.time() - start_time))
+            logger.info("Smoke tested %s host[s] in %s seconds",
+                        len(instance_list), int(0.5 + time.time() - start_time))
 
     def smoketest_once(self, instance):
         """
@@ -783,13 +814,13 @@ class DiscoAWS(object):
 
     @staticmethod
     def is_running(instance):
-        """Returns true iff an instance is in the running state"""
+        """Returns true if an instance is in the running state"""
         instance.update()
         return instance.state == u'running'
 
     @staticmethod
     def is_terminal_state(instance):
-        """Returns true iff an instance is in the terminated state"""
+        """Returns true if an instance is in the terminated state"""
         instance.update()
         return instance.state in (u'failed', u'terminated')
 
@@ -822,13 +853,13 @@ class DiscoAWS(object):
         ]
 
         if not long_running_ami_ids:
-            logging.warning("No running instances with sufficient uptime, to promote AMIs.")
+            logger.warning("No running instances with sufficient uptime, to promote AMIs.")
             return
 
         disco_bake = DiscoBake()
         amis = disco_bake.get_amis(long_running_ami_ids)
         for ami in amis:
-            logging.debug("ami: %s", ami.id)
+            logger.debug("ami: %s", ami.id)
             if ami.tags['stage'] == disco_bake.final_stage:
                 disco_bake.promote_ami_to_production(ami)
 

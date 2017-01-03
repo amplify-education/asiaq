@@ -5,16 +5,17 @@ Only Redis on Elasticache is supported at the moment
 import getpass
 import logging
 import hashlib
-from ConfigParser import ConfigParser
 
 import boto3
 import botocore
 from semantic_version import Spec, Version
 
-from . import normalize_path
+from .disco_config import read_config
 from .disco_route53 import DiscoRoute53
 from .exceptions import CommandError
 from .resource_helper import throttled_call
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoElastiCache(object):
@@ -40,11 +41,9 @@ class DiscoElastiCache(object):
         """lazy load config"""
         if not self._config:
             try:
-                config = ConfigParser()
-                config.read(normalize_path(self.config_file))
-                self._config = config
+                self._config = read_config(self.config_file)
             except Exception:
-                return None
+                raise
         return self._config
 
     def list(self):
@@ -101,8 +100,8 @@ class DiscoElastiCache(object):
                 self._modify_redis_cluster(cluster_name, engine_version,
                                            parameter_group, auto_failover, domain_name, maintenance_window)
             else:
-                logging.error('Unable to update cache cluster %s. Its status is not available',
-                              cache_cluster['Description'])
+                logger.error('Unable to update cache cluster %s. Its status is not available',
+                             cache_cluster['Description'])
 
     def update_all(self):
         """Update all clusters in environment to match config"""
@@ -123,10 +122,10 @@ class DiscoElastiCache(object):
         cluster = self._get_redis_cluster(cluster_name)
 
         if not cluster:
-            logging.info('Cache cluster %s does not exist. Nothing to delete', cluster_name)
+            logger.info('Cache cluster %s does not exist. Nothing to delete', cluster_name)
             return
 
-        logging.info('Deleting cache cluster %s', cluster['Description'])
+        logger.info('Deleting cache cluster %s', cluster['Description'])
         throttled_call(self.conn.delete_replication_group, ReplicationGroupId=cluster['ReplicationGroupId'])
 
         self.route53.delete_records_by_value('CNAME', cluster['NodeGroups'][0]['PrimaryEndpoint']['Address'])
@@ -143,7 +142,7 @@ class DiscoElastiCache(object):
         """
         clusters = self.list()
         for cluster in clusters:
-            logging.info('Deleting cache cluster %s', cluster['Description'])
+            logger.info('Deleting cache cluster %s', cluster['Description'])
             throttled_call(self.conn.delete_replication_group,
                            ReplicationGroupId=cluster['ReplicationGroupId'])
 
@@ -162,7 +161,7 @@ class DiscoElastiCache(object):
                          if group['CacheSubnetGroupName'].startswith(self.vpc.environment_name + '-')]
 
         for group in subnet_groups:
-            logging.info('Deleting cache subnet group %s', group['CacheSubnetGroupName'])
+            logger.info('Deleting cache subnet group %s', group['CacheSubnetGroupName'])
             throttled_call(self.conn.delete_cache_subnet_group,
                            CacheSubnetGroupName=group['CacheSubnetGroupName'])
 
@@ -212,7 +211,7 @@ class DiscoElastiCache(object):
         meta_network = self.vpc.networks[meta_network_name]
         subnet_group = self._get_subnet_group_name(meta_network_name)
 
-        logging.info('Creating "%s" Redis cache', description)
+        logger.info('Creating "%s" Redis cache', description)
         throttled_call(self.conn.create_replication_group,
                        ReplicationGroupId=replication_group_id,
                        ReplicationGroupDescription=description,
@@ -274,7 +273,7 @@ class DiscoElastiCache(object):
         subnet_group_name = self._get_subnet_group_name(meta_network_name)
         meta_network = self.vpc.networks[meta_network_name]
 
-        logging.info('Creating cache subnet group %s', subnet_group_name)
+        logger.info('Creating cache subnet group %s', subnet_group_name)
         throttled_call(self.conn.create_cache_subnet_group,
                        CacheSubnetGroupName=subnet_group_name,
                        CacheSubnetGroupDescription=subnet_group_name,

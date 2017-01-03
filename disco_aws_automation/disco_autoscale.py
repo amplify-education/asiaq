@@ -8,12 +8,14 @@ import boto.ec2
 import boto.ec2.autoscale
 import boto.ec2.autoscale.launchconfig
 import boto.ec2.autoscale.group
-from boto.ec2.autoscale.policy import ScalingPolicy
 from boto.exception import BotoServerError
 from botocore.exceptions import WaiterError
 import boto3
 
 from .resource_helper import throttled_call
+from .exceptions import TooManyAutoscalingGroups
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_TERMINATION_POLICIES = ["OldestLaunchConfiguration"]
@@ -134,11 +136,11 @@ class DiscoAutoscale(object):
     def delete_config(self, config_name):
         '''Delete a specific Launch Configuration'''
         throttled_call(self.connection.delete_launch_configuration, config_name)
-        logging.info("Deleting launch configuration %s", config_name)
+        logger.info("Deleting launch configuration %s", config_name)
 
     def clean_configs(self):
         '''Delete unused Launch Configurations in current environment'''
-        logging.info("Cleaning up unused launch configurations in %s", self.environment_name)
+        logger.info("Cleaning up unused launch configurations in %s", self.environment_name)
         for config in self._get_config_generator():
             try:
                 self.delete_config(config.name)
@@ -156,10 +158,10 @@ class DiscoAutoscale(object):
         for group in groups:
             try:
                 throttled_call(group.delete, force_delete=force)
-                logging.info("Deleting group %s", group.name)
+                logger.info("Deleting group %s", group.name)
                 self.delete_config(group.launch_config_name)
             except BotoServerError:
-                logging.info("Unable to delete group %s, try force deleting", group.name)
+                logger.info("Unable to delete group %s, try force deleting", group.name)
 
     def clean_groups(self, force=False):
         '''
@@ -180,7 +182,7 @@ class DiscoAutoscale(object):
         groups = self.get_existing_groups(hostclass=hostclass, group_name=group_name)
         for group in groups:
             group.min_size = group.max_size = group.desired_capacity = 0
-            logging.info("Scaling down group %s", group.name)
+            logger.info("Scaling down group %s", group.name)
             throttled_call(group.update)
 
             if wait:
@@ -188,11 +190,11 @@ class DiscoAutoscale(object):
                 instance_ids = [inst.instance_id for inst in self.get_instances(group_name=group_name)]
 
                 try:
-                    logging.info("Waiting for scaledown of group %s", group.name)
+                    logger.info("Waiting for scaledown of group %s", group.name)
                     waiter.wait(InstanceIds=instance_ids)
                 except WaiterError:
                     if noerror:
-                        logging.exception("Unable to wait for scaling down of %s", group_name)
+                        logger.exception("Unable to wait for scaling down of %s", group_name)
                         return False
                     else:
                         raise
@@ -281,18 +283,38 @@ class DiscoAutoscale(object):
         NOTE: Deleting tags is not currently supported.
         '''
         # Check if an autoscaling group already exists.
-        group = self.get_existing_group(hostclass=hostclass, group_name=group_name)
-        if create_if_exists or not group:
-            return self.create_group(
+        existing_group = self.get_existing_group(hostclass=hostclass, group_name=group_name)
+        if create_if_exists or not existing_group:
+            group = self.create_group(
                 hostclass=hostclass, launch_config=launch_config, vpc_zone_id=vpc_zone_id,
                 min_size=min_size, max_size=max_size, desired_size=desired_size,
                 termination_policies=termination_policies, tags=tags, load_balancers=load_balancers,
                 placement_group=placement_group)
         else:
-            return self.update_group(
-                group=group, launch_config=launch_config,
+            group = self.update_group(
+                group=existing_group, launch_config=launch_config,
                 vpc_zone_id=vpc_zone_id, min_size=min_size, max_size=max_size, desired_size=desired_size,
                 termination_policies=termination_policies, tags=tags, load_balancers=load_balancers)
+
+        # Create default scaling policies
+        self.create_policy(
+            group_name=group.name,
+            policy_name='up',
+            policy_type='SimpleScaling',
+            adjustment_type='PercentChangeInCapacity',
+            scaling_adjustment='10',
+            min_adjustment_magnitude='1'
+        )
+        self.create_policy(
+            group_name=group.name,
+            policy_name='down',
+            policy_type='SimpleScaling',
+            adjustment_type='PercentChangeInCapacity',
+            scaling_adjustment='-10',
+            min_adjustment_magnitude='1'
+        )
+
+        return group
 
     def get_existing_groups(self, hostclass=None, group_name=None):
         """
@@ -321,7 +343,7 @@ class DiscoAutoscale(object):
         elif len(groups) == 1 or (len(groups) == 2 and not throw_on_two_groups):
             return groups[0]
         else:
-            raise RuntimeError("There are too many autoscaling groups for {}.".format(hostclass))
+            raise TooManyAutoscalingGroups("There are too many autoscaling groups for {}.".format(hostclass))
 
     def terminate(self, instance_id, decrement_capacity=True):
         """
@@ -337,7 +359,11 @@ class DiscoAutoscale(object):
         """Returns all launch configurations for a hostclass if any exist, None otherwise"""
         group_list = self.get_existing_groups(hostclass=hostclass, group_name=group_name)
         if group_list:
-            return self.get_configs(names=[group.launch_config_name for group in group_list])
+            return self.get_configs(names=[
+                group.launch_config_name
+                for group in group_list
+                if group.launch_config_name
+            ])
         return None
 
     def get_launch_config(self, hostclass=None, group_name=None):
@@ -345,19 +371,102 @@ class DiscoAutoscale(object):
         config_list = self.get_launch_configs(hostclass=hostclass, group_name=group_name)
         return config_list[0] if config_list else None
 
-    def list_policies(self):
+    def list_policies(self, group_name=None, policy_types=None, policy_names=None):
         """Returns all autoscaling policies"""
-        return throttled_call(self.connection.get_all_policies)
+        arguments = {}
+        if group_name:
+            arguments["AutoScalingGroupName"] = group_name
+        if policy_types:
+            arguments["PolicyTypes"] = policy_types
+        if policy_names:
+            arguments["PolicyNames"] = policy_names
 
-    def create_policy(self, policy_name, group_name, adjustment, cooldown):
-        """Creates an autoscaling policy and associates it with an autoscaling group"""
-        policy = ScalingPolicy(name=policy_name, adjustment_type='ChangeInCapacity',
-                               as_name=group_name, scaling_adjustment=adjustment, cooldown=cooldown)
-        throttled_call(self.connection.create_scaling_policy, policy)
+        results = throttled_call(self.boto3_autoscale.describe_policies, **arguments)
+        next_token = results.get('NextToken')
+
+        # Next token will be an empty string if we're done
+        while next_token:
+            # Get additional results
+            arguments['NextToken'] = next_token
+            additional_results = throttled_call(self.boto3_autoscale.describe_policies, **arguments)
+
+            # Extend the existing results and setup the next token for another iteration
+            results['ScalingPolicies'] += additional_results['ScalingPolicies']
+            next_token = additional_results.get('NextToken')
+
+        policies = []
+
+        for result in results['ScalingPolicies']:
+            group_name = result['AutoScalingGroupName']
+            if group_name.startswith(self.environment_name):
+                # The usage of 'or' is because those keys are present but sometimes contain empty values, so
+                # its needed to use 'or' to make sure that those empty values become our conventionally
+                # accepted '-' empty values.
+                policies.append({
+                    'ASG': group_name,
+                    'Name': result['PolicyName'],
+                    'Type': result['PolicyType'],
+                    'Adjustment Type': result['AdjustmentType'],
+                    'Scaling Adjustment': result.get('ScalingAdjustment'),
+                    'Step Adjustments': result.get('StepAdjustments'),
+                    'Min Adjustment': result.get('MinAdjustmentMagnitude'),
+                    'Cooldown': result.get('Cooldown'),
+                    'Warmup': result.get('EstimatedInstanceWarmup'),
+                    'Alarms': result.get('Alarms')
+                })
+
+        return policies
+
+    def create_policy(
+            self,
+            group_name,
+            policy_name,
+            policy_type="SimpleScaling",
+            adjustment_type=None,
+            min_adjustment_magnitude=None,
+            scaling_adjustment=None,
+            cooldown=600,
+            metric_aggregation_type=None,
+            step_adjustments=None,
+            estimated_instance_warmup=None
+    ):
+        """
+        Creates a new autoscaling policy, or updates an existing one if the autoscaling group name and
+        policy name already exist. Handles the logic of constructing the correct autoscaling policy request,
+        because not all parameters are required.
+        """
+        arguments = {
+            "AutoScalingGroupName": group_name,
+            "PolicyName": policy_name,
+            "PolicyType": policy_type,
+            "AdjustmentType": adjustment_type
+        }
+
+        if policy_type == "SimpleScaling":
+            arguments["ScalingAdjustment"] = int(scaling_adjustment)
+            arguments["Cooldown"] = int(cooldown)
+            # Special case here, where if we just blindly add min adjustment magnitude we actually get errors
+            # from boto3 unless the adjustment type is as such.
+            if adjustment_type == "PercentChangeInCapacity":
+                arguments["MinAdjustmentMagnitude"] = int(min_adjustment_magnitude)
+        elif policy_type == "StepScaling":
+            arguments["MetricAggregationType"] = metric_aggregation_type
+            arguments["StepAdjustments"] = step_adjustments
+            arguments["EstimatedInstanceWarmup"] = int(estimated_instance_warmup)
+
+        logger.info(
+            "Creating autoscaling policy '%s' in autoscaling group '%s'",
+            policy_name,
+            group_name
+        )
+
+        logger.debug("Autoscaling policy parameters: %s", arguments)
+
+        return throttled_call(self.boto3_autoscale.put_scaling_policy, **arguments)
 
     def delete_policy(self, policy_name, group_name):
         """Deletes an autoscaling policy"""
-        return throttled_call(self.connection.delete_policy, policy_name, group_name)
+        return throttled_call(self.boto3_autoscale.delete_policy, policy_name, group_name)
 
     def delete_all_recurring_group_actions(self, hostclass=None, group_name=None):
         """Deletes all recurring scheduled actions for a hostclass"""
@@ -365,9 +474,14 @@ class DiscoAutoscale(object):
         for group in groups:
             actions = throttled_call(self.connection.get_all_scheduled_actions, as_group=group.name)
             recurring_actions = [action for action in actions if action.recurrence is not None]
-            for action in recurring_actions:
-                throttled_call(self.connection.delete_scheduled_action,
-                               scheduled_action_name=action.name, autoscale_group=group.name)
+            if recurring_actions:
+                logger.info("Deleting scheduled actions for autoscaling group %s", group.name)
+                for action in recurring_actions:
+                    throttled_call(
+                        self.connection.delete_scheduled_action,
+                        scheduled_action_name=action.name,
+                        autoscale_group=group.name
+                    )
 
     def create_recurring_group_action(self, recurrance, min_size=None, desired_capacity=None, max_size=None,
                                       hostclass=None, group_name=None):
@@ -375,6 +489,7 @@ class DiscoAutoscale(object):
         groups = self.get_existing_groups(hostclass=hostclass, group_name=group_name)
         for group in groups:
             action_name = "{0}_{1}".format(group.name, recurrance.replace('*', 'star').replace(' ', '_'))
+            logger.info("Creating scheduled action %s", action_name)
             throttled_call(self.connection.create_scheduled_group_action,
                            as_group=group.name, name=action_name,
                            min_size=min_size,
@@ -422,11 +537,11 @@ class DiscoAutoscale(object):
             snapshot_bdm.size = snapshot_size
             self.update_group(self.get_existing_group(hostclass=hostclass, group_name=group_name),
                               self._create_new_launchconfig(hostclass, launch_config).name)
-            logging.info(
+            logger.info(
                 "Updating %s group's snapshot from %s to %s", hostclass or group_name, old_snapshot_id,
                 snapshot_id)
         else:
-            logging.debug(
+            logger.debug(
                 "Autoscaling group %s is already referencing latest snapshot %s", hostclass or group_name,
                 snapshot_id)
 
@@ -435,15 +550,15 @@ class DiscoAutoscale(object):
         group = self.get_existing_group(hostclass=hostclass, group_name=group_name)
 
         if not group:
-            logging.warning("Auto Scaling group %s does not exist. Cannot change %s ELB(s)",
-                            hostclass or group_name, ', '.join(elb_names))
+            logger.warning("Auto Scaling group %s does not exist. Cannot change %s ELB(s)",
+                           hostclass or group_name, ', '.join(elb_names))
             return (set(), set())
 
         new_lbs = set(elb_names) - set(group.load_balancers)
         extras = set(group.load_balancers) - set(elb_names)
         if new_lbs or extras:
-            logging.info("Updating ELBs for group %s from [%s] to [%s]",
-                         group.name, ", ".join(group.load_balancers), ", ".join(elb_names))
+            logger.info("Updating ELBs for group %s from [%s] to [%s]",
+                        group.name, ", ".join(group.load_balancers), ", ".join(elb_names))
         if new_lbs:
             throttled_call(self.boto3_autoscale.attach_load_balancers,
                            AutoScalingGroupName=group.name,

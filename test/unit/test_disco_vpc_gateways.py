@@ -132,6 +132,7 @@ class DiscoVPCGatewaysTests(unittest.TestCase):
                 'maintenance_cidr': 'auto',
                 'ntp_server': '10.0.0.5',
                 'tunnel_nat_gateways': '10.1.0.4,10.1.0.5,10.1.0.6',
+                'intranet_nat_gateways': 'auto',
                 'nat_gateway_routes': 'intranet/tunnel'
             }
         })
@@ -155,6 +156,7 @@ class DiscoVPCGatewaysTests(unittest.TestCase):
 
             ret.name = name
             ret.vpc = vpc
+            ret.subnet_ids = ["subnet-cafe", "subnet-beef"]
             ret.get_nat_gateway_metanetwork.return_value = None
             if network_cidr:
                 ret.network_cidr = IPNetwork(network_cidr)
@@ -164,15 +166,14 @@ class DiscoVPCGatewaysTests(unittest.TestCase):
             return ret
 
         meta_network_mock.side_effect = _meta_network_mock
-
         # End of setting up test
 
         # Calling method under test
         self.disco_vpc_gateways.update_nat_gateways_and_routes()
 
         # Verifying correct behavior
-        network_intranet_mock.add_nat_gateway_route.assert_called_once_with(network_tunnel_mock)
-        network_tunnel_mock.add_nat_gateways.assert_called_once_with([
+        network_intranet_mock.upsert_nat_gateway_route.assert_called_once_with(network_tunnel_mock)
+        network_tunnel_mock.add_nat_gateways.assert_called_once_with(allocation_ids=[
             self.disco_vpc_gateways.eip.find_eip_address('eip').allocation_id,
             self.disco_vpc_gateways.eip.find_eip_address('eip').allocation_id,
             self.disco_vpc_gateways.eip.find_eip_address('eip').allocation_id

@@ -12,6 +12,8 @@ from boto.ec2 import cloudwatch
 
 from disco_aws_automation.resource_helper import keep_trying
 
+logger = logging.getLogger(__name__)
+
 
 class DiscoMetrics(object):
     """Class for sending custom metrics to AWS CloudWatch"""
@@ -53,7 +55,7 @@ class DiscoMetrics(object):
         info = {regex.match(line).group(1): regex.match(line).group(2)
                 for line in userdata.split("\n")
                 if regex.match(line)}
-        logging.debug("userdata %s", info)
+        logger.debug("userdata %s", info)
         return info
 
     @staticmethod
@@ -67,7 +69,7 @@ class DiscoMetrics(object):
             info = {regex.match(line).group(1): float(regex.match(line).group(2))
                     for line in f
                     if regex.match(line)}
-            logging.debug("meminfo %s", info)
+            logger.debug("meminfo %s", info)
             if not info:
                 raise RuntimeError("Unable to parse /proc/meminfo")
             return info
@@ -94,7 +96,7 @@ class DiscoMetrics(object):
                     'steal': float(match.group(5)),
                     'idle': float(match.group(6))
                 }
-                logging.debug("cpuinfo %s", info)
+                logger.debug("cpuinfo %s", info)
                 return info
         raise RuntimeError("Unable to parse cpu info from iostat output")
 
@@ -113,7 +115,7 @@ class DiscoMetrics(object):
                     queues[match.group(1)] = float(match.group(2))
         except CalledProcessError:
             raise RuntimeError("Unable to call rabbitmqctl")
-        logging.debug("queues %s", queues)
+        logger.debug("queues %s", queues)
         return queues
 
     @staticmethod
@@ -122,17 +124,17 @@ class DiscoMetrics(object):
         Returns df disk utilization percentage info in a map.
         Raises RuntimeError if it fails to parse df output.
         """
-        output = check_output(['df'])
+        output = check_output(['df', '-P'])
         regex = re.compile(r"(\S+)\s+\d+\s+\d+\s+\d+\s+(\d+)%.*")
         info = {regex.match(line).group(1): regex.match(line).group(2)
                 for line in output.split("\n")
                 if regex.match(line)}
-        logging.debug("diskinfo %s", info)
+        logger.debug("diskinfo %s", info)
         return info
 
     def send_custom_metric(self, namespace, name, value, unit, when=None):
         """Sends a custom metric to AWS CloudWatch"""
-        logging.debug("Sending %s %s %s", name, value, unit)
+        logger.debug("Sending %s %s %s", name, value, unit)
         keep_trying(15, self._connection.put_metric_data,
                     namespace=namespace, name=name, value=value, unit=unit,
                     dimensions=self._dimensions, timestamp=when)
@@ -146,22 +148,22 @@ class DiscoMetrics(object):
         try:
             self._metrics.mem = DiscoMetrics.get_meminfo()
         except (RuntimeError, CalledProcessError):
-            logging.exception("Ignoring this exception in DiscoMetrics.collect()")
+            logger.exception("Ignoring this exception in DiscoMetrics.collect()")
 
         try:
             self._metrics.cpu = DiscoMetrics.get_cpuinfo()
         except (RuntimeError, CalledProcessError):
-            logging.exception("Ignoring this exception in DiscoMetrics.collect()")
+            logger.exception("Ignoring this exception in DiscoMetrics.collect()")
 
         try:
             self._metrics.disk = DiscoMetrics.get_diskinfo()
         except (RuntimeError, CalledProcessError):
-            logging.exception("Ignoring this exception in DiscoMetrics.collect()")
+            logger.exception("Ignoring this exception in DiscoMetrics.collect()")
 
         try:
             self._metrics.rabbit = DiscoMetrics.get_rabbitmqinfo()
         except (RuntimeError, CalledProcessError):
-            logging.exception("Ignoring this exception in DiscoMetrics.collect()")
+            logger.exception("Ignoring this exception in DiscoMetrics.collect()")
 
     def upload(self):
         """

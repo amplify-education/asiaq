@@ -6,12 +6,14 @@ Usage:
     disco_alarms.py [--debug] [--dry-run] [--env ENV] update_notifications [--delete]
     disco_alarms.py [--debug] [--env ENV] update_metrics [--delete] --hostclass HOSTCLASS
     disco_alarms.py [--debug] [--env ENV] list [--hostclass HOSTCLASS]
+    disco_alarms.py [--debug] --env ENV delete
     disco_alarms.py (-h | --help)
 
 Commands:
-     update_notifications     Updates SNS topics and subscriptions
-     update_metrics           Updates CloudWatch metrics, triggers, and SNS links
-     list                     List alarms
+     update_notifications   Updates SNS topics and subscriptions
+     update_metrics         Updates CloudWatch metrics, triggers, and SNS links
+     list                   List alarms
+     delete                 Deletes all environment alarms
 
 Options:
      -h --help              Show this screen
@@ -26,12 +28,12 @@ Options:
 """
 from __future__ import print_function
 import sys
-import logging
 
 from docopt import docopt
 
-from disco_aws_automation import DiscoSNS, read_config
+from disco_aws_automation import DiscoSNS
 from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
 from disco_aws_automation.disco_alarm_config import DiscoAlarmsConfig
 from disco_aws_automation.disco_alarm import DiscoAlarm
@@ -66,8 +68,10 @@ def run():
             {"env": env, "hostclass": hostclass} if hostclass else {"env": env})
         for alarm in alarms:
             print(alarm)
+    elif args["delete_environment_alarms"]:
+        disco_alarm.delete_environment_alarms(env)
     else:
-        logging.error("No command specified. See --help")
+        print("No command specified. See --help")
         sys.exit(1)
 
 if __name__ == "__main__":

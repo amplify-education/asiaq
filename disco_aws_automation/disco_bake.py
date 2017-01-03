@@ -17,7 +17,7 @@ import boto.exception
 import dateutil.parser
 from pytz import UTC
 
-from . import normalize_path, read_config
+from .disco_config import normalize_path, read_config
 from .resource_helper import wait_for_sshable, keep_trying, wait_for_state
 from .disco_storage import DiscoStorage
 from .disco_remote_exec import DiscoRemoteExec, SSH_DEFAULT_OPTIONS
@@ -25,6 +25,8 @@ from .disco_vpc import DiscoVPC
 from .exceptions import CommandError, AMIError, WrongPathError, EarlyExitException
 from .disco_constants import DEFAULT_CONFIG_SECTION
 from .disco_aws_util import is_truthy
+
+logger = logging.getLogger(__name__)
 
 AMI_NAME_PATTERN = re.compile(r"^\w+\s(?:[0-9]+\s)?[0-9]{10,50}")
 AMI_TAG_LIMIT = 10
@@ -185,7 +187,7 @@ class DiscoBake(object):
         Runs the init script for a particular phase
         (i.e. phase1.sh for base bake and phase2.sh for hostclass specific bake).
         """
-        logging.info("Phase %s config", phase)
+        logger.info("Phase %s config", phase)
 
         wait_for_sshable(self.remotecmd, instance)
         self.copy_aws_data(instance)
@@ -196,7 +198,7 @@ class DiscoBake(object):
         Executes an init script that was dropped off by disco_aws_data.
         Hostclass and Hostname are passed in as arguments
         """
-        logging.info("Running remote init script %s.", script)
+        logger.info("Running remote init script %s.", script)
         script = "{0}/init/{1}".format(self.option("data_destination"), script)
 
         repo = self.repo_instance()
@@ -225,7 +227,7 @@ class DiscoBake(object):
         Share this AMI with the production accounts
         '''
         for prod_account in self.option("prod_account_ids").split():
-            logging.warning("Permitting %s to be launched by prod account %s", ami.id, prod_account)
+            logger.warning("Permitting %s to be launched by prod account %s", ami.id, prod_account)
             ami.set_launch_permissions(prod_account)
 
     def promote_latest_ami_to_production(self, hostclass):
@@ -278,7 +280,7 @@ class DiscoBake(object):
         """
         Copies all the files in this repo to the destination instance.
         """
-        logging.info("Copying discoaws data.")
+        logger.info("Copying discoaws data.")
         config_data_destination = self.option("data_destination")
         asiaq_data_destination = self.option("data_destination") + "/asiaq"
         self.remotecmd(instance, ["mkdir", "-p", asiaq_data_destination])
@@ -318,7 +320,7 @@ class DiscoBake(object):
                     user=user, ssh_options=ssh_args)
                 break
             except:
-                logging.debug(
+                logger.debug(
                     "OS specific: moving %s user ssh keys to root",
                     user
                 )
@@ -348,13 +350,13 @@ class DiscoBake(object):
             base_image_name = hostclass if hostclass else self.option("phase1_ami_name")
             source_ami_id = source_ami_id or self.hc_option(base_image_name, 'bake_ami')
             hostclass = self.option("phase1_hostclass")
-            logging.info("Creating phase 1 AMI named %s based on upstream AMI %s",
-                         base_image_name, source_ami_id)
+            logger.info("Creating phase 1 AMI named %s based on upstream AMI %s",
+                        base_image_name, source_ami_id)
         else:
             source_ami_id = source_ami_id or self._get_phase1_ami_id(hostclass)
             base_image_name = hostclass
-            logging.info("Creating phase 2 AMI for hostclass %s based on phase 1 AMI %s",
-                         base_image_name, source_ami_id)
+            logger.info("Creating phase 2 AMI for hostclass %s based on phase 1 AMI %s",
+                        base_image_name, source_ami_id)
 
         image_name = "{0} {1}".format(base_image_name, int(time.time()))
 
@@ -377,7 +379,7 @@ class DiscoBake(object):
         try:
             keep_trying(10, instance.add_tag, "hostclass", "bake_{0}".format(hostclass))
         except Exception:
-            logging.exception("Setting hostclass during bake failed. Ignoring error.")
+            logger.exception("Setting hostclass during bake failed. Ignoring error.")
 
         try:
             wait_for_sshable(self.remotecmd, instance)
@@ -387,14 +389,14 @@ class DiscoBake(object):
             if no_destroy:
                 raise EarlyExitException("--no-destroy specified, skipping shutdown to allow debugging")
 
-            logging.debug("Stopping instance")
+            logger.debug("Stopping instance")
             # We delete the authorized keys so there is no possibility of using the bake key
             # for root login in production and we shutdown via the shutdown command to make
             # sure the snapshot is of a clean filesystem that won't trigger fsck on start.
             # We use nothrow to ignore ssh's 255 exit code on shutdown of centos7
             self.remotecmd(instance, ["rm -Rf /root/.ssh/authorized_keys ; shutdown now -h"], nothrow=True)
             wait_for_state(instance, u'stopped', 300)
-            logging.info("Creating snapshot from instance")
+            logger.info("Creating snapshot from instance")
 
             # Check whether or not enhanced networking should be enabled for this hostclass
             enhanced_networking = self.hc_option_default(hostclass, "enhanced_networking", "false")
@@ -402,7 +404,7 @@ class DiscoBake(object):
             # This attribute will be copied over the the AMI when it is created, and doesn't appear
             # to cause any problems.
             if is_truthy(enhanced_networking):
-                logging.info("Setting enhanced networking attribute")
+                logger.info("Setting enhanced networking attribute")
                 self.connection.modify_instance_attribute(instance.id, "sriovNetSupport", "simple")
 
             image_id = instance.create_image(image_name, no_reboot=True)
@@ -416,18 +418,17 @@ class DiscoBake(object):
 
             wait_for_state(image, u'available',
                            int(self.hc_option_default(hostclass, "ami_available_wait_time", "600")))
-            logging.info("Created %s AMI %s", image_name, image_id)
-        except EarlyExitException as early_exit:
-            logging.info(str(early_exit))
+            logger.info("Created %s AMI %s", image_name, image_id)
         except:
-            logging.exception("Snap shot failed. See trace below.")
+            logger.exception("Snap shot failed. See trace below.")
             raise
         finally:
             if not no_destroy:
                 instance.terminate()
             else:
-                logging.info("Examine instance command: ssh root@%s",
-                             instance.ip_address or instance.private_ip_address)
+                logger.info("Examine instance command: "
+                            "ssh -o UserKnownHostsFile=/dev/null root@%s",
+                            instance.ip_address or instance.private_ip_address)
 
         return image
 
@@ -454,7 +455,7 @@ class DiscoBake(object):
         Adds a dict of tags to an AMI with retries
         """
         for tag_name in tag_dict.keys():
-            logging.info('Adding tag %s with value %s to ami', tag_name, tag_dict[tag_name])
+            logger.info('Adding tag %s with value %s to ami', tag_name, tag_dict[tag_name])
             keep_trying(10, ami.add_tag, tag_name, tag_dict[tag_name])
 
     @staticmethod
@@ -523,7 +524,7 @@ class DiscoBake(object):
             to_delete = by_days.intersection(by_count)
 
             if to_delete:
-                logging.info("Deleting %s AMIs: %s", hostclass, to_delete)
+                logger.info("Deleting %s AMIs: %s", hostclass, to_delete)
                 for ami in to_delete:
                     self.pretty_print_ami(ami, now)
 
@@ -602,7 +603,7 @@ class DiscoBake(object):
         """
         Delete an AMI
         """
-        logging.info("Deleting AMI %s", ami)
+        logger.info("Deleting AMI %s", ami)
         self.connection.deregister_image(ami, delete_snapshot=True)
 
     def get_snapshots(self, ami):
@@ -660,9 +661,10 @@ class DiscoBake(object):
         stage, state, and hostclass.
         """
         filtered_amis = []
+        stages = stage.split(',') if stage else None
         for ami in amis:
             filters = [
-                not stage or ami.tags.get("stage", None) == stage,
+                not stages or ami.tags.get("stage", None) in stages,
                 not product_line or ami.tags.get("productline", None) == product_line,
                 not state or ami.state == state,
                 not hostclass or self.ami_hostclass(ami) == hostclass]
@@ -683,11 +685,37 @@ class DiscoBake(object):
             filters = {}
             filters["name"] = "{0} *".format(hostclass)
             amis = self.get_amis(filters=filters)
-            logging.debug("AMI search for %s found %s", filters, amis)
+            logger.debug("AMI search for %s found %s", filters, amis)
             amis = self.ami_filter(amis, stage, product_line)
-            return max(amis, key=self.ami_timestamp) if amis else None
+            stages = [val.strip() for val in stage.split(",")] if stage else []
+            return self._latest_best_stage_ami(stages, amis)
         else:
             raise ValueError("Must specify either hostclass or AMI")
+
+    def _latest_best_stage_ami(self, stages, amis):
+        """
+        Find the latest AMI of the earliest stage in the list that has AMIs.
+
+        If the list of AMIs is empty, return None; if input is bull, returns the horns.
+        """
+        if not amis:  # avoid a bunch of bounds-checking
+            return None
+        stage_priority = {stage: index for index, stage in enumerate(stages)}
+
+        def _get_priority(ami):  # because apparently it's not OK to assign a lambda (<eyeroll>)
+            return stage_priority.get(ami.tags.get("stage"), 100000000)
+
+        found_ami = amis[0]
+        for ami in amis[1:]:
+            ami_priority = _get_priority(ami)
+            found_priority = _get_priority(found_ami)
+            if ami_priority > found_priority:
+                # this AMI has a less-good stage than the already-found one
+                continue
+            if ami_priority < found_priority or self.ami_timestamp(ami) > self.ami_timestamp(found_ami):
+                # this has a better stage, or the same stage and a better timestamp
+                found_ami = ami
+        return found_ami
 
     @staticmethod
     def _git_ref():

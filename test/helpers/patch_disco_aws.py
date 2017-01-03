@@ -26,10 +26,11 @@ See PATCH_LIST and patch_disco_aws for available mocks and their names.
 """
 from ConfigParser import NoSectionError, NoOptionError
 
-from mock import Mock, patch
+from mock import patch
 from moto import mock_ec2, mock_s3, mock_autoscaling, mock_route53, mock_elb
 
 from test.helpers.patcher import patcher
+from disco_aws_automation.disco_config import AsiaqConfig
 
 TEST_ENV_NAME = "unittestenv"
 PATCH_LIST = [patch("disco_aws_automation.disco_aws.wait_for_state",
@@ -65,29 +66,39 @@ def get_mock_config(config_dict=None):
     The format of the dictionary is
     {"section": {"key" : "value"}
     '''
-    mock_config = Mock()
-    config_dict = config_dict if config_dict else get_default_config_dict()
+    return MockAsiaqConfig(config_dict)
 
-    def _mock_config_get(section, key):
-        if section not in config_dict:
+
+class MockAsiaqConfig(AsiaqConfig):
+    """
+    A ConfigParser subclass which returns the contents of either the
+    default dictionary or a dictionary passed in, rather than expecting to parse any actual files.
+    The format of the dictionary is
+    {"section": {"key" : "value"}
+    """
+
+    def __init__(self, config_dict=None, environment=None):
+        AsiaqConfig.__init__(self, environment=environment)
+        self.config_dict = config_dict or get_default_config_dict()
+
+    def get(self, section, key, **_kwargs):
+        if section not in self.config_dict:
             raise NoSectionError(section)
-        if key not in config_dict[section]:
+        if key not in self.config_dict[section]:
             raise NoOptionError(key, section)
-        return config_dict[section][key]
+        return self.config_dict[section][key]
 
-    def _mock_config_has(section, key):
-        return (section in config_dict) and (key in config_dict[section])
+    def sections(self):
+        return self.config_dict.keys()
 
-    def _mock_config_items(section):
-        return config_dict[section].iteritems() if config_dict.get(section) else []
+    def has_option(self, section, key):
+        return (section in self.config_dict) and (key in self.config_dict[section])
 
-    mock_config.sections.return_value = config_dict.keys()
-    mock_config.get.side_effect = _mock_config_get
-    mock_config.has_option.side_effect = _mock_config_has
+    def has_section(self, section):
+        return section in self.config_dict
 
-    mock_config.items.side_effect = _mock_config_items
-
-    return mock_config
+    def items(self, section, **_kwargs):
+        return self.config_dict[section].iteritems() if self.config_dict.get(section) else []
 
 
 patch_disco_aws = patcher(patches=PATCH_LIST,

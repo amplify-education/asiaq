@@ -14,6 +14,7 @@ from boto.exception import S3ResponseError as S3ResponseError
 from .disco_aws_util import is_truthy
 from .exceptions import AccountError
 
+logger = logging.getLogger(__name__)
 USER_OPTION_FLAGS = {
     "home": "-d",
     "password": "-p",
@@ -181,7 +182,7 @@ class S3AccountBackend(object):
                     raise AccountError("unknown file format")
                 accounts.append(account_class(account_name, config))
             except (S3ResponseError, AccountError) as err:
-                logging.info("User info unavailable for %s: %s", account_name, err)
+                logger.info("User info unavailable for %s: %s", account_name, err)
         return accounts
 
     def list_users(self):

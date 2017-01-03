@@ -5,6 +5,7 @@ Create / Destroy VPC endpoints
 import json
 
 import boto3
+from .resource_helper import throttled_call
 
 S3_POLICY = {
     "Statement": [
@@ -41,7 +42,7 @@ class DiscoVPCEndpoints(object):
         Find full, region specific service endpoint name from colloquial
         name (eg: s3 -> com.amazonaws.us-west-2.s3)
         """
-        endpoint_responce = self.boto3_ec2.describe_vpc_endpoint_services()
+        endpoint_responce = throttled_call(self.boto3_ec2.describe_vpc_endpoint_services)
         service_names = endpoint_responce["ServiceNames"]
 
         matching_service_names = [
@@ -61,9 +62,8 @@ class DiscoVPCEndpoints(object):
         ]
 
     def _all_vpc_route_tables_ids(self):
-        route_table_response = self.boto3_ec2.describe_route_tables(
-            Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
-        )
+        route_table_response = throttled_call(self.boto3_ec2.describe_route_tables,
+                                              Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}])
         return [
             rt["RouteTableId"]
             for rt in route_table_response["RouteTables"]
@@ -79,20 +79,18 @@ class DiscoVPCEndpoints(object):
         self.delete_s3(dry_run)
 
         if not dry_run:
-            self.boto3_ec2.create_vpc_endpoint(
-                VpcId=self.vpc_id,
-                ServiceName=self.service_name("s3"),
-                PolicyDocument=json.dumps(policy_dict),
-                RouteTableIds=route_table_ids,
-            )
+            throttled_call(self.boto3_ec2.create_vpc_endpoint,
+                           VpcId=self.vpc_id,
+                           ServiceName=self.service_name("s3"),
+                           PolicyDocument=json.dumps(policy_dict),
+                           RouteTableIds=route_table_ids)
 
     def list_s3_ids(self):
         """
         Return all s3 endpoint ids in the vpc.
         """
-        endpoint_results = self.boto3_ec2.describe_vpc_endpoints(
-            Filters=self.filters('s3'),
-        )
+        endpoint_results = throttled_call(self.boto3_ec2.describe_vpc_endpoints,
+                                          Filters=self.filters('s3'))
         return [
             endpoint['VpcEndpointId']
             for endpoint in endpoint_results['VpcEndpoints']
@@ -107,9 +105,8 @@ class DiscoVPCEndpoints(object):
             return False
 
         if not dry_run:
-            self.boto3_ec2.delete_vpc_endpoints(
-                VpcEndpointIds=s3_ids,
-            )
+            throttled_call(self.boto3_ec2.delete_vpc_endpoints,
+                           VpcEndpointIds=s3_ids)
         return True
 
     def update(self, dry_run=False):

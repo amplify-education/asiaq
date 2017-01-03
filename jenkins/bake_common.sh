@@ -24,11 +24,14 @@ function bake {
     local hostclass=$1
     local attempt=0
     local exit_code=1
+    if [ "${BAKE_TO_STAGE}" != "" ]; then
+        stage_arg="--stage=$BAKE_TO_STAGE"
+    fi
 
     while [ "$exit_code" != "0" -a "$attempt" -lt "$MAX_ATTEMPTS" ]; do
         local log_file="$LOG_DIR/$hostclass.$attempt.log"
         echo "Baking $hostclass -- log at $log_file"
-        disco_bake.py --debug bake --hostclass $hostclass --use-local-ip &> $log_file
+        disco_bake.py --debug bake --hostclass $hostclass --use-local-ip $stage_arg &> $log_file
         exit_code="$?"
         attempt=$((attempt+1))
     done

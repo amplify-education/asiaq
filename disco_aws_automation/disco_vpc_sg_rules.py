@@ -7,7 +7,9 @@ import logging
 from boto.exception import EC2ResponseError
 
 from .exceptions import VPCEnvironmentError
-from .resource_helper import keep_trying
+from .resource_helper import keep_trying, throttled_call
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoVPCSecurityGroupRules(object):
@@ -147,24 +149,23 @@ class DiscoVPCSecurityGroupRules(object):
         for security_group in security_groups:
             for permission in security_group['IpPermissions']:
                 try:
-                    logging.debug(
+                    logger.debug(
                         "revoking %s %s %s %s", security_group, permission.get('IpProtocol'),
                         permission.get('FromPort', '-'), permission.get('ToPort', '-'))
-                    self.boto3_ec2.revoke_security_group_ingress(
-                        GroupId=security_group['GroupId'],
-                        IpPermissions=[permission]
-                    )
+                    throttled_call(self.boto3_ec2.revoke_security_group_ingress,
+                                   GroupId=security_group['GroupId'],
+                                   IpPermissions=[permission])
                 except EC2ResponseError:
-                    logging.exception("Skipping error deleting sg rule.")
+                    logger.exception("Skipping error deleting sg rule.")
 
     def _destroy_security_groups(self):
         """ Find all security groups belonging to vpc and destroy them."""
         for security_group in self.get_all_security_groups_for_vpc():
             if security_group['GroupName'] != u'default':
-                logging.debug("deleting sg: %s", security_group)
-                self.boto3_ec2.delete_security_group(GroupId=security_group['GroupId'])
+                logger.debug("deleting sg: %s", security_group)
+                throttled_call(self.boto3_ec2.delete_security_group, GroupId=security_group['GroupId'])
 
     def get_all_security_groups_for_vpc(self):
         """ Find all security groups belonging to vpc and return them """
-        return self.boto3_ec2.describe_security_groups(
-            Filters=self.disco_vpc.vpc_filters())['SecurityGroups']
+        return throttled_call(self.boto3_ec2.describe_security_groups,
+                              Filters=self.disco_vpc.vpc_filters())['SecurityGroups']

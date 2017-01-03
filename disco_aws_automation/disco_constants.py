@@ -21,3 +21,4 @@ NETWORKS = {"intranet": "Inter host",
             "maintenance": "Admin jump box"}
 
 VPC_CONFIG_FILE = "disco_vpc.ini"
+ES_CONFIG_FILE = "disco_elasticsearch.ini"

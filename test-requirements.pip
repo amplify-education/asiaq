@@ -8,6 +8,5 @@ nose-cov>=1.5,<2
 mock>=1.0.1,<2
 coverage<4
 # Additional libraries
-# moto 0.4.24 is breaking our unit tests
-moto>=0.4.10,<=0.4.23
+moto>=0.4.30
 six>=1.7.3

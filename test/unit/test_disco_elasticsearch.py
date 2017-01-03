@@ -13,6 +13,7 @@ from test.helpers.patch_disco_aws import get_mock_config
 MOCK_AWS_CONFIG_DEFINITION = {
     "disco_aws": {
         "default_domain_name": "aws.example.com",
+        "default_environment": "fake-ci",
     }
 }
 
@@ -35,6 +36,7 @@ MOCK_ES_CONFIG_DEFINITION = {
         "volume_size": "10",
         "iops": "10000",
         "snapshot_start_hour": "5",
+        "version": "1.5",
         "allowed_source_ips": "192.0.2.100 192.0.2.200"
     },
     "foo:other-logs": {
@@ -52,6 +54,19 @@ MOCK_ES_CONFIG_DEFINITION = {
         "volume_type": "standard",
         "volume_size": "10",
         "snapshot_start_hour": "5"
+    },
+    "defaults": {
+        "instance_type": "m3.medium.elasticsearch",
+        "instance_count": "1",
+        "dedicated_master": "False",
+        "zone_awareness": "False",
+        "ebs_enabled": "False",
+        "volume_type": "standard",
+        "volume_size": "10",
+        "iops": "1000",
+        "snapshot_start_hour": "5",
+        "version": "2.3",
+        "allowed_source_ips": ""
     }
 }
 
@@ -254,6 +269,7 @@ class DiscoElastiSearchTests(TestCase):
         self._es.update(elasticsearch_name)
         self.assertEquals(len(self._es.list()), 1)
         new_domain_config = self._es._describe_es_domain(self._es.get_domain_name(elasticsearch_name))
+        del original_domain_config['DomainStatus']['ElasticsearchVersion']
         self.assertEquals(original_domain_config.viewitems(), new_domain_config.viewitems())
 
     def test_create_and_delete_a_domain(self):
@@ -317,12 +333,21 @@ class DiscoElastiSearchTests(TestCase):
         original_config = self._es._describe_es_domain(self._es.get_domain_name(elasticsearch_name))
         original_instance_type = original_config["DomainStatus"]["ElasticsearchClusterConfig"]["InstanceType"]
         desired_instance_type = "m3.xlarge.elasticsearch"
+        self.assertIn(
+            "ElasticsearchVersion",
+            self._es._conn.create_elasticsearch_domain.call_args[1]
+        )
+
         es_config["ElasticsearchClusterConfig"]["InstanceType"] = desired_instance_type
         self._es.update(elasticsearch_name, es_config)
         new_config = self._es._describe_es_domain(self._es.get_domain_name(elasticsearch_name))
         new_instance_type = new_config["DomainStatus"]["ElasticsearchClusterConfig"]["InstanceType"]
         self.assertNotEquals(original_instance_type, new_instance_type)
         self.assertEquals(new_instance_type, desired_instance_type)
+        self.assertNotIn(
+            "ElasticsearchVersion",
+            self._es._conn.update_elasticsearch_domain_config.call_args[1]
+        )
 
     def test_can_create_and_then_update_all_domains(self):
         """Verify that all domains can be created and then one updated"""

@@ -5,6 +5,8 @@ import itertools
 import boto
 from boto.exception import BotoServerError
 
+logger = logging.getLogger(__name__)
+
 
 class DiscoSNS(object):
     """
@@ -22,7 +24,7 @@ class DiscoSNS(object):
                 arn = boto.connect_iam().get_user().arn
             except BotoServerError:
                 # Instance Roles have no user ID, so we fetch the instance profile arn
-                logging.debug(
+                logger.debug(
                     "Failed to lookup ARN from user ID. "
                     "Attempting to lookup ARN from InstanceProfile instead."
                 )
@@ -127,15 +129,15 @@ class DiscoSNS(object):
                                                                        env)
 
         if topics_to_delete_arn:
-            logging.warning("Found %s extraneous topics: %s", len(topics_to_delete_arn), topics_to_delete_arn)
+            logger.warning("Found %s extraneous topics: %s", len(topics_to_delete_arn), topics_to_delete_arn)
         if subscriptions_to_delete:
-            logging.warning("Found %s extraneous subscriptions: %s",
-                            len(subscriptions_to_delete), subscriptions_to_delete)
+            logger.warning("Found %s extraneous subscriptions: %s",
+                           len(subscriptions_to_delete), subscriptions_to_delete)
         if desired_topics:
-            logging.info("The following topics and their subscriptions will be updated: %s", desired_topics)
+            logger.info("The following topics and their subscriptions will be updated: %s", desired_topics)
         if delete:
-            logging.info("The following topics will be deleted: %s", topics_to_delete_arn)
-            logging.info("The following subscriptions will be deleted: %s", subscriptions_to_delete)
+            logger.info("The following topics will be deleted: %s", topics_to_delete_arn)
+            logger.info("The following subscriptions will be deleted: %s", subscriptions_to_delete)
 
         if not dry_run:
             for notification in notifications:

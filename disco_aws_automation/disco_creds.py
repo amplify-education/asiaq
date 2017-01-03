@@ -13,6 +13,8 @@ from .resource_helper import check_written_s3
 
 SSH_PRIVATE_KEY_BUCKET_PREFIX = 'private_keys/ssh/'
 
+logger = logging.getLogger(__name__)
+
 
 class DiscoS3Bucket(object):
     """
@@ -29,7 +31,7 @@ class DiscoS3Bucket(object):
         if not self._bucket:
             connection = S3Connection()  # by default will use access key id and secret from ~/.boto
             self._bucket = connection.get_bucket(self._bucket_name)
-            logging.debug("established connection to bucket '%s'", self._bucket_name)
+            logger.debug("established connection to bucket '%s'", self._bucket_name)
         return self._bucket
 
     def listkeys(self, prefix_keys):
