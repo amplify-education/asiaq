@@ -207,10 +207,11 @@ class DiscoAutoscale(object):
         return [boto.ec2.autoscale.Tag(key=key, value=value, resource_id=group_name, propagate_at_launch=True)
                 for key, value in tags.iteritems()] if tags else None
 
+    # pylint: disable=too-many-arguments
     def update_group(self, group, launch_config, vpc_zone_id=None,
                      min_size=None, max_size=None, desired_size=None,
                      termination_policies=None, tags=None,
-                     load_balancers=None):
+                     load_balancers=None, placement_group=None):
         '''Update an existing autoscaling group'''
         group.launch_config_name = launch_config
         if vpc_zone_id:
@@ -223,6 +224,8 @@ class DiscoAutoscale(object):
             group.desired_capacity = desired_size
         if termination_policies:
             group.termination_policies = termination_policies
+        if placement_group:
+            group.placement_group = placement_group
         throttled_call(group.update)
         if tags:
             throttled_call(self.connection.create_or_update_tags,
@@ -231,10 +234,12 @@ class DiscoAutoscale(object):
             self.update_elb(elb_names=load_balancers, group_name=group.name)
         return group
 
+    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-locals
     def create_group(self, hostclass, launch_config, vpc_zone_id,
                      min_size=None, max_size=None, desired_size=None,
                      termination_policies=None, tags=None,
-                     load_balancers=None):
+                     load_balancers=None, placement_group=None):
         '''
         Create an autoscaling group.
 
@@ -254,7 +259,7 @@ class DiscoAutoscale(object):
             default_cooldown=None,
             health_check_type=None,
             health_check_period=None,
-            placement_group=None,
+            placement_group=placement_group,
             vpc_zone_identifier=vpc_zone_id,
             desired_capacity=_desired_capacity,
             min_size=_min_size,
@@ -270,7 +275,7 @@ class DiscoAutoscale(object):
                   min_size=None, max_size=None, desired_size=None,
                   termination_policies=None, tags=None,
                   load_balancers=None, create_if_exists=False,
-                  group_name=None):
+                  group_name=None, placement_group=None):
         '''
         Returns autoscaling group.
         This updates an existing autoscaling group if it exists,
@@ -284,7 +289,8 @@ class DiscoAutoscale(object):
             group = self.create_group(
                 hostclass=hostclass, launch_config=launch_config, vpc_zone_id=vpc_zone_id,
                 min_size=min_size, max_size=max_size, desired_size=desired_size,
-                termination_policies=termination_policies, tags=tags, load_balancers=load_balancers)
+                termination_policies=termination_policies, tags=tags, load_balancers=load_balancers,
+                placement_group=placement_group)
         else:
             group = self.update_group(
                 group=existing_group, launch_config=launch_config,

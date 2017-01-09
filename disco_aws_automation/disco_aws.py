@@ -18,6 +18,7 @@ from boto.exception import EC2ResponseError
 from .disco_log_metrics import DiscoLogMetrics
 from .disco_elb import DiscoELB
 from .disco_alarm import DiscoAlarm
+from .disco_placement_group import DiscoPlacementGroup
 from .disco_autoscale import DiscoAutoscale
 from .disco_aws_util import (
     is_truthy,
@@ -59,7 +60,7 @@ class DiscoAWS(object):
     # Too many arguments, but we want to mock a lot of things out, so...
     # pylint: disable=too-many-arguments
     def __init__(self, config, environment_name=None, boto2_conn=None, vpc=None, remote_exec=None,
-                 storage=None, autoscale=None, elb=None, log_metrics=None, alarms=None):
+                 storage=None, autoscale=None, elb=None, log_metrics=None, alarms=None, placement_group=None):
 
         if not environment_name and not vpc:
             raise ProgrammerError("Either 'vpc' or 'environment_name' must always be specified.")
@@ -77,6 +78,7 @@ class DiscoAWS(object):
         self._elb = elb or None  # lazily initialized
         self._log_metrics = log_metrics or None  # lazily initialized
         self._alarms = alarms or None  # lazily initialized
+        self._placement_group = placement_group or None  # lazily initialized
 
     @property
     def connection(self):
@@ -119,6 +121,13 @@ class DiscoAWS(object):
         if not self._alarms:
             self._alarms = DiscoAlarm(self.environment_name)
         return self._alarms
+
+    @property
+    def placement_group(self):
+        """Lazily creates placement group object for our current VPC"""
+        if not self._placement_group:
+            self._placement_group = DiscoPlacementGroup(self.environment_name)
+        return self._placement_group
 
     @property
     def vpc(self):
@@ -422,6 +431,11 @@ class DiscoAWS(object):
 
         chaos = is_truthy(chaos or self.hostclass_option_default(hostclass, "chaos", "True"))
 
+        placement_group = None
+        placement_group_name = self.hostclass_option_default(hostclass, "placement_group")
+        if placement_group_name:
+            placement_group = self.placement_group.get_or_create(placement_group_name)
+
         group = self.autoscale.get_group(
             hostclass=hostclass, launch_config=launch_config.name,
             vpc_zone_id=",".join([subnet['SubnetId'] for subnet
@@ -437,7 +451,8 @@ class DiscoAWS(object):
                   "is_testing": "1" if testing else "0"},
             load_balancers=[elb['LoadBalancerName']] if elb else [],
             create_if_exists=create_if_exists,
-            group_name=group_name
+            group_name=group_name,
+            placement_group=placement_group['GroupName'] if placement_group else None
         )
 
         self.create_scaling_schedule(min_size, desired_size, max_size, group_name=group.name)

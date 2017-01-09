@@ -31,6 +31,7 @@ Table of Contents
   * [RDS](#rds)
   * [SSM](#ssm)
   * [Testing a hostclass](#testing-hostclasses)
+  * [Placement Groups](#placement-groups)
 
 
 History
@@ -2370,3 +2371,15 @@ The process is as follows:
 * After the new instances are marked as Healthy by the ELB, the old ASG is destroyed.
 
 If at any point there is a problem, the new ASG and testing ELB will be destroyed. Service to the original ASG and ELB should not be interrupted.
+
+Placement Groups
+-------------------
+Placement groups are groups of EC2 instances within a single availability zone.
+Instances within placement groups can communicate with each over a low latency 10Gbps connection.
+It is recommended to also use `Enhanced Networking` when using placement groups.
+
+Asiaq supports putting hostclasses into placement groups with the `placement_group` option in the `disco_aws.ini` file.
+Multiple hostclasses can be put into the same placement group.
+
+    [mhcbanana]
+    placement_group=banana
