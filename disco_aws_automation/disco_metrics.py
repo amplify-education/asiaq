@@ -26,6 +26,7 @@ class DiscoMetrics(object):
             self.cpu = {}
             self.disk = {}
             self.rabbit = {}
+            self.apache_conn = None
 
     def __init__(self, dummy=False):
         if dummy:
@@ -132,6 +133,24 @@ class DiscoMetrics(object):
         logger.debug("diskinfo %s", info)
         return info
 
+    @staticmethod
+    def get_conninfo():
+        """
+        Reads apache mod_status for number of current conenctions.
+        Raises RuntimeError if it fails to parse mod_status info.
+        """
+        conn = None
+        res = urllib2.urlopen("http://localhost:3333/server-status?auto")
+        for l in res:
+            if "BusyWorkers" in l:
+                for s in l.split():
+                    if s.isdigit():
+                        conn = int(s)
+        logging.debug("apache conn info %s", conn)
+        if not conn:
+            raise RuntimeError("Unable to get apache status")
+        return conn
+
     def send_custom_metric(self, namespace, name, value, unit, when=None):
         """Sends a custom metric to AWS CloudWatch"""
         logger.debug("Sending %s %s %s", name, value, unit)
@@ -164,6 +183,11 @@ class DiscoMetrics(object):
             self._metrics.rabbit = DiscoMetrics.get_rabbitmqinfo()
         except (RuntimeError, CalledProcessError):
             logger.exception("Ignoring this exception in DiscoMetrics.collect()")
+
+        try:
+            self._metrics.apache_conn = DiscoMetrics.get_conninfo()
+        except (RuntimeError, CalledProcessError):
+            logging.exception("Ignoring this exception in DiscoMetrics.collect()")
 
     def upload(self):
         """
@@ -208,3 +232,7 @@ class DiscoMetrics(object):
         if disk:
             self.send_custom_metric(
                 'EC2/Disk', disk.keys(), disk.values(), 'Percent', metrics.when)
+
+        # if apache:
+        #     self.send_custom_metric(
+        #         'EC2/Apache', disk.keys(), disk.values(), 'Percent', metrics.when)
