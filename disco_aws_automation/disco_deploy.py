@@ -8,7 +8,8 @@ import sys
 from ConfigParser import NoOptionError, NoSectionError
 from boto.exception import EC2ResponseError
 
-from . import DiscoBake, read_config
+from . import DiscoBake
+from .disco_config import read_config
 from .exceptions import (
     TimeoutError,
     MaintenanceModeError,

@@ -39,8 +39,9 @@ from getpass import getpass
 
 from docopt import docopt
 
-from disco_aws_automation import S3AccountBackend, DiscoS3Bucket, DiscoVPC, read_config
+from disco_aws_automation import S3AccountBackend, DiscoS3Bucket, DiscoVPC
 from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
 
 

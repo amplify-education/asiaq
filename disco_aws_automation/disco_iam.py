@@ -15,7 +15,7 @@ import boto.iam
 import boto3
 import botocore
 
-from . import read_config
+from .disco_config import read_config
 from .disco_aws_util import is_truthy
 
 logger = logging.getLogger(__name__)

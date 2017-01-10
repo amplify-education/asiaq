@@ -27,8 +27,9 @@ Commands:
 from __future__ import print_function
 from docopt import docopt
 
-from disco_aws_automation import read_config, DiscoLogMetrics
+from disco_aws_automation import DiscoLogMetrics
 from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
 
 

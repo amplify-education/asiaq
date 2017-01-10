@@ -74,12 +74,22 @@ EPHEMERAL_DISK_COUNT = {
     "r3.2xlarge": 1,
     "r3.4xlarge": 1,
     "r3.8xlarge": 2,
+    "r4.large": 0,
+    "r4.xlarge": 0,
+    "r4.2xlarge": 0,
+    "r4.4xlarge": 0,
+    "r4.8xlarge": 0,
+    "r4.16xlarge": 0,
     "t1.micro": 0,
     "t2.nano": 0,
     "t2.micro": 0,
     "t2.small": 0,
     "t2.medium": 0,
     "t2.large": 0,
+    "t2.xlarge": 0,
+    "t2.2xlarge": 0,
+    "x1.16xlarge": 1,
+    "x1.32xlarge": 2
 }
 
 # see http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSOptimized.html
@@ -233,7 +243,7 @@ class DiscoStorage(object):
 
         return bdm
 
-    def create_ebs_snapshot(self, hostclass, size):
+    def create_ebs_snapshot(self, hostclass, size, product_line, encrypted=True):
         """
         Creates an EBS snapshot in the first listed availability zone.
 
@@ -242,6 +252,8 @@ class DiscoStorage(object):
 
         :param hostclass:  The hostclass that uses this snapshot
         :param size:  The size of the snapshot in GB
+        :param product_line: The productline that the hostclass belongs to
+        :param encrypted:  Boolean whether snapshot is encrypted
         """
         zones = throttled_call(self.connection.get_all_zones)
         if not zones:
@@ -258,12 +270,14 @@ class DiscoStorage(object):
                     logger.error("Couldn't destroy temporary volume %s", volume.id)
 
             try:
-                volume = throttled_call(self.connection.create_volume, size=size, zone=zone)
+                volume = throttled_call(self.connection.create_volume, size=size,
+                                        zone=zone, encrypted=encrypted)
                 logger.info("Created temporary volume %s in zone %s.", volume.id, zone.name)
                 wait_for_state(volume, 'available', state_attr='status')
                 snapshot = volume.create_snapshot()
                 snapshot.add_tag('hostclass', hostclass)
                 snapshot.add_tag('env', self.environment_name)
+                snapshot.add_tag('productline', product_line)
                 logger.info("Created snapshot %s from volume %s.", snapshot.id, volume.id)
             except Exception:
                 _destroy_volume(volume)
@@ -328,7 +342,8 @@ class DiscoStorage(object):
                 instance_ids=[volume.attach_data.instance_id])[0].instances[0]
 
             tags = {'hostclass': instance.tags['hostclass'],
-                    'env': instance.tags['environment']}
+                    'env': instance.tags['environment'],
+                    'productline': instance.tags['productline']}
         else:
             raise RuntimeError("The volume specified is not attched to an instance. "
                                "Snapshotting that is not supported.")

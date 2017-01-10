@@ -12,7 +12,8 @@ import random
 from hashlib import sha512
 from base64 import standard_b64encode
 
-from disco_aws_automation import DiscoS3Bucket, normalize_path
+from . import DiscoS3Bucket
+from .disco_config import normalize_path
 from .resource_helper import check_written_s3
 from .exceptions import MissingAppAuthError, AppAuthKeyNotFoundError
 

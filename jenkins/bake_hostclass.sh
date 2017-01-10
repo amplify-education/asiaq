@@ -10,7 +10,11 @@ echo "hostclass: $HOSTCLASS"
 
 source "${SELF_DIR}/boto_init.sh"
 
-disco_bake.py --debug bake --hostclass $HOSTCLASS --use-local-ip
+if [ "${BAKE_TO_STAGE}" != "" ]; then
+    stage_arg="--stage=$BAKE_TO_STAGE"
+fi
+
+disco_bake.py --debug bake --hostclass $HOSTCLASS --use-local-ip $stage_arg
 if [[ "$?" != "0" ]] ; then SUCCEEDED="false" ; fi
 
 curl -ksS -X POST $JENKINS_URL/job/$JOB_NAME/build --data token=$TOKEN \

@@ -19,7 +19,7 @@ from test.helpers.patch_disco_aws import TEST_ENV_NAME, get_mock_config
 @patch('boto3.client')
 @patch('boto3.resource')
 @patch('disco_aws_automation.disco_vpc.DiscoMetaNetwork')
-@patch('disco_aws_automation.disco_vpc.DiscoVPC.get_random_free_subnet')
+@patch('disco_aws_automation.disco_vpc.get_random_free_subnet')
 def _get_vpc_mock(random_subnet_mock=None, meta_network_mock=None, boto3_resource_mock=None,
                   boto3_client_mock=None, config_mock=None,
                   gateways_mock=None, sns_mock=None, endpoints_mock=None, rds_mock=None):
@@ -39,7 +39,8 @@ def _get_vpc_mock(random_subnet_mock=None, meta_network_mock=None, boto3_resourc
     # pylint: disable=C0103
     def _create_vpc_mock(CidrBlock):
         return {'Vpc': {'CidrBlock': CidrBlock,
-                        'VpcId': 'mock_vpc_id'}}
+                        'VpcId': 'mock_vpc_id',
+                        'DhcpOptionsId': 'mock_dhcp_options_id'}}
 
     random_subnet_mock.return_value = IPNetwork('10.0.0.0/26')
 

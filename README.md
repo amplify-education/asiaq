@@ -19,7 +19,7 @@ Table of Contents
   * [Image management](#image-management)
   * [Logging](#logging)
   * [Network Configuration](#network-configuration)
-  * [EBS Snapshots](#ebs-snapshots)
+  * [Storage](#storage)
   * [Identity and Access Management](#identity-and-access-management)
   * [Monitoring and alerting](#monitoring-and-alerting)
   * [Working with DynamoDB](#working-with-dynamodb)
@@ -635,7 +635,7 @@ Environments
 
 Environments created by Asiaq are separated out by VPCs.
 Each environment resides in its own VPC and has its own metanetworks,
-gateways, instances, and so on. All environment management is done with
+gateways, instances, and so on. Most environment management is done with
 the disco_vpc_ui.py tool.
 
 ### Listing Active Environments
@@ -708,6 +708,38 @@ If you will be doing a lot of work in a particular environment you can
 define the DEFAULT_ENV environment variable and disco_aws.py will
 default to working in that environment.
 
+### Working with "sandbox" environments
+
+As a special case, asiaq has a convenience tool that creates VPCs with
+the "sandbox" type, and provides a few shortcuts:
+
+    * the VPC will automatically be provisioned using the pipeline file
+      in "sandboxes/${SANDBOX_NAME}/pipeline.csv
+    * a preset list of configuration files may be synced to an S3
+      bucket, so that hosts that spin up in a named sandbox are able
+      to configure themselves differently if need be (this can be
+      useful for managing service discovery, if the sandbox does not
+      contain an instance of every possible hostclass and its
+      dependencies).
+
+To spin up a sandbox, from a pipeline that has already been created in
+the appropriate configuration location, you can simply run
+
+    asiaq sandbox $SANDBOX_NAME
+
+To configure configuration-file syncing, set the `sandbox_sync_config`
+option in the `disco_aws` section of the main configuration file to
+the name of the S3 bucket, and populate the `sandbox_sync_config`
+option.  This option is line-based, and contains whitespace-separated
+tuples in the form (local file, remote directory): for each line, the file
+`sandboxes/$SANDBOX_NAME/$LOCAL_FILE` will be copied to the s3 bucket
+in the location `$REMOTE_DIRECTORY/$SANDBOX_NAME`.  So, by way of example:
+
+    sandbox_config_bucket=us-west-2.myproject.sandboxes
+    sandbox_sync_config=zk_blacklist zookeeper-sync-black-lists
+        trusted_ip_list   firewall-trusted-cidrs
+
+
 Provisioning a pipeline
 -----------------------
 
@@ -725,7 +757,7 @@ The format of the CSV file is pretty simple. Here is a short sample:
     2,mhcdiscotaskstatus,,1,,m3.large,,,no,yes,disco_profiling_task_status_service
     2,mhcdiscoinferenceworer,1,1@45 19 * * *:3@33 19 * * *,,5,m3.large,,,no,yes,disco_inference_workflow
 
-Field descriptions:
+### Field Descriptions
 
 1.  Instance boot sequence number. The smaller the number the earlier
     the machines are started, relative to others. This field need not to
@@ -753,12 +785,14 @@ Field descriptions:
 12. integration_test Name of the integration test to run to verify
     instances are in a good state
 
+#### Schedule Scaling
 The desired_size can be either an integer or a colon (:) separated list
 of integers with cron formatted times at which to apply each size. Using
 the at symbol (@) to separate the desired size and the cron
 specification. For example, `"1@30 10 * * *:5@45 1 * * *"` says to scale
 to one host at 10:30 AM UTC and scale to 5 hosts at 1:45 AM UTC.
 
+### Manual Provisioning
 But you can also provision machines one at a time using the provision
 command, for example:
 
@@ -1201,7 +1235,7 @@ to instances on boot with DHCP. We expose a smaller subset of these:
 -   `internal_dns` Primary DNS server
 -   `external_dns` Secondary DNS server
 -   `domain_name` The network domain
--   `ntp_server` Address of NTP server.
+-   `ntp_server` Up to four space separated IP addresses or DNS names of NTP servers.
 
 We use AWS resolver by specifying AmazonProvidedDNS for internal_dns
 and external_dns, alternatively the APIPA address 169.254.169.253 can
@@ -1249,6 +1283,25 @@ Multiple VGW routes can also be specified. So for example if the
 customer has two networks to route via IGW:
 
     dmz_vgw_routes=10.123.0.0/16 1.124.0.0/16
+
+#### VPC Peering
+
+Peering can be configured between VPCs to enable communication between them. 
+The syntax for the peering config is `vpc_name[:vpc_type]/metanetwork vpc_name[:vpc_type]/metanetwork`.
+`vpc_name` can either be the name of an existing VPC or `*` to match any VPC of a certain type. 
+
+For example:
+
+    [peerings]
+    connection_1=example-vpc:sandbox/tunnel ci/intranet
+    connection_2=*:sandbox/tunnel ci/intranet
+    
+The keys for the peering config don't matter except that they must be unique and start with `connection_`
+    
+The `connection_1` configuration will create a peering connection from the `example-vpc` to a vpc named `ci`. 
+Security groups will be updated to allow traffic from `example-vpc`'s tunnel metanetwork to `ci`'s intranet metanetwork.
+    
+The `connection_2` configuration will create peering connections to any VPC of type `sandbox` to `ci`
 
 ### Instance Network Options
 
@@ -1342,11 +1395,66 @@ WARNING! Setting a private IP on an instance will lock it a single
 Availability Zone. This is a limitation of AWS' subnets, they cannot
 span multiple Availability Zones.
 
-EBS Snapshots
--------------
+Storage
+-------
 
-In AWS you almost always want to offload state to an AWS managed service
-there are times when you will want to store state on an EBS volume that
+Images are often baked with small volumes, just enough to install and run
+the OS. This reduces cost on storage. However for machines that maintain
+substantial amount of state often need additional storage. Generally speaking
+it's often best to offload state to a managed services such as EBS
+(for database), ElastiCache (caches), S3 (static data and artifacts),
+ElasticSearch (logs & events). However this is not always possible and for
+this reason asiaq supports several methods of additional local storage.
+
+### Local ephemeral storage
+
+Some AWS instances come with [instance store](http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/InstanceStorage.html).
+Asiaq provides scripts for conveniently and safely mounting these on boot.
+There are few guarantees on long term persistence of these volumes, they do
+not survive reboots or termination. As such, the example script goes a bit
+further to ensure data stored there is irretrievable in case of unsafe /
+unexpected termination by setting up encrypted virtual volumes. The keys to
+these volumes are dynamically generated and discarded on mount. After volume
+is unmounted or machine is rebooted the data will be irretrievable.
+
+An example of how to make use of the sample scripts can be found here:
+`discoroot/etc/init.d/disco-tmp-storage~mhcdiscojenkins`
+while the logic for encrypting
+`discoroot/etc/init.d/disco-storage-functions.sh`
+
+### Enlarging root volume
+
+This method is not recommended, it was implemented first and attaching
+additional volumes is bit more flexible.
+
+Extra_space option can be used to enlarge root volume on boot. To make use
+of the additional space the filesystem needs to be enlarged. This is best
+done at boot and a ext-fs compatible init script is provided in
+sample_configuration, `discoroot/etc/init.d/disco-resize-file-system`.
+
+Parameter must be specified at instance creation, and this can be done
+as command line argument `--extra-space` to `disco_aws.py provision ...`
+or as a extra_space column when spun up via [pipeline definition](#provisioning-a-pipeline).
+
+
+## Attaching additional volumes
+
+Unlike instance storage, EBS volumes can be attached and resized to fit
+the requirements -- without changing instance types. Additional EBS
+volume (asiaq only supports 1 additional volume) can be attached with
+extra_disk option, similar to extra_space its available in both
+`disco_aws.py provision ...` as well as [pipeline definition](#provisioning-a-pipeline).
+
+After instance boots the volume needs to be formatted and mounted.
+
+Unlike extra_space, extra_disk option when combined with snapshoting on
+shutdown will persist across reboot. Making it a more flexible option,
+rendering root volume resizing redundant and obsolete.
+
+
+#### EBS Snapshots
+
+There are times when you will want to store state on an EBS volume that
 is preserved across reboots. This can be done with EBS snapshots. Asiaq
 will automatically link the latest snapshot tagged with a hostclass name
 to the autoscaling group for that hostclass upon autoscaling group
@@ -1362,12 +1470,12 @@ which work how you would expect them to work.
 
 There is also a create command that allows you to create the initial
 EBS volume snapshot for a hostclass. This initial volume will not be
-formatted.
+formatted. The volume created and its snapshot will be encrypted by default.
+You can pass option --unencrypted to create an unencrypted EBS volume.
 
 
 Identity and Access Management
 ------------------------------
-
 We make use of IAM for access control to AWS resources quite
 extensively. Despite this we treat the IAM configuration in AWS as
 ephemeral, it gets periodically reloaded from configuration stored in
@@ -1798,6 +1906,8 @@ Options:
 -   `elb_sticky_app_cookie` [Optional] Enable sticky sessions by setting the session cookie of your application
 -   `elb_idle_timeout` [Default=300] Timeout before ELB kills idle connections
 -   `elb_connection_draining` [Default=300] The timeout, in seconds, for requests to unhealthy or de-registering instances to complete before instance is removed from ELB
+-   `elb_cross_zone_load_balancing` [Default=True] If true, the ELB will evenly distribute load across instances regardless of their AZs. If false, the ELB will evenly distribute load across AZs regardless of number of instances in each AZ.
+-   `elb_cert_name` [Optional] ELBs will use HTTPS certs by looking them up by the ELB's CNAME. Use this option to force the ELB to use a cert for a different domain
 
 ### Commands for managing ELB
 List all ELBs in the environment
@@ -2145,6 +2255,29 @@ The `update-documents` command also accepts the `--dry-run` flag, which causes t
 
     disco_ssm.py update-documents --dry-run
 
+### Execution
+
+The mechanism for executing SSM commands is `disco_aws.py exec-ssm`.
+
+Here's an example of executing a document of a hostclass in staging:
+
+`AWS_PROFILE=<YOUR PROD PROFILE NAME> disco_aws.py --env staging exec-ssm --document ifconfig --hostclass mhcbar`
+
+SSM also supports parameters. If the document you are executing supports parameters, you can specify the parameters as key=value pairs with the `--parameters` argument, repeating the `--parameters` argument for every parameter you need to specify. Here's an example:
+
+`disco_aws.py exec-ssm --document run-tests --hostclass mhcfoo --parameter test=loadtest`
+
+For more information, see `disco_aws.py exec-ssm --help` for full usage instructions.
+
+Some important notes about executing SSM documents:
+
+* You cannot pick the user that is used for executing the SSM document. All SSM documents are executed as the root user.
+* SSM documents execute in parallel across all targets instances, not serially.
+* SSM documents have a default timeout of one minute. If this timeout is not otherwise overwritten, the output will still be returned but the command itself will be marked as a failure.
+
+#### Configuration
+
+Executing SSM documents can be somewhat customized through modifications to `disco_aws.ini`. You can set the `default_ssm_s3_bucket` option under the `disco_aws` section in the `disco_aws.ini`. The value of this option should correspond to an S3 bucket where the output of SSM documents should be uploaded for longer term storage. If this option is not set, then the output of SSM documents will be limited to 2500 characters.
 
 Testing Hostclasses
 -------------------

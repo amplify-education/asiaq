@@ -38,7 +38,6 @@ from .disco_remote_exec import DiscoRemoteExec
 from .disco_storage import DiscoStorage
 from .disco_vpc import DiscoVPC
 from .resource_helper import (
-    TimeoutError,
     keep_trying,
     wait_for_state,
 )
@@ -48,6 +47,7 @@ from .exceptions import (
     SmokeTestError,
     CommandError,
     TimeoutError,
+    ProgrammerError,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,9 +58,15 @@ class DiscoAWS(object):
 
     # Too many arguments, but we want to mock a lot of things out, so...
     # pylint: disable=too-many-arguments
-    def __init__(self, config, environment_name, boto2_conn=None, vpc=None, remote_exec=None, storage=None,
-                 autoscale=None, elb=None, log_metrics=None, alarms=None):
-        self.environment_name = environment_name
+    def __init__(self, config, environment_name=None, boto2_conn=None, vpc=None, remote_exec=None,
+                 storage=None, autoscale=None, elb=None, log_metrics=None, alarms=None):
+
+        if not environment_name and not vpc:
+            raise ProgrammerError("Either 'vpc' or 'environment_name' must always be specified.")
+        elif environment_name:
+            self.environment_name = environment_name
+        else:
+            self.environment_name = vpc.environment_name
         self._config = config
         self._project_name = self._config.get("disco_aws", "project_name")
         self._connection = boto2_conn or None  # lazily initialized
@@ -323,12 +329,22 @@ class DiscoAWS(object):
                 connection_draining_timeout=int(self.hostclass_option_default(hostclass,
                                                                               "elb_connection_draining",
                                                                               300)),
+                cert_name=self.hostclass_option_default(hostclass, "elb_cert_name"),
                 testing=testing,
                 tags={
                     "hostclass": hostclass,
                     "is_testing": "1" if testing else "0",
-                    "environment": self.environment_name
-                })
+                    "environment": self.environment_name,
+                    "productline": self.hostclass_option_default(hostclass, 'product_line', 'unknown')
+                },
+                cross_zone_load_balancing=is_truthy(
+                    self.hostclass_option_default(
+                        hostclass,
+                        "elb_cross_zone_load_balancing",
+                        "true"
+                    )
+                )
+            )
 
         if update_autoscaling:
             self.autoscale.update_elb([elb['LoadBalancerName']] if elb else [], hostclass=hostclass)
@@ -562,13 +578,23 @@ class DiscoAWS(object):
 
     def instances_from_hostclasses(self, hostclasses):
         """Returns a flat list of all instances for a list of hostclasses"""
-        return [instance
-                for instance in self.instances()
-                if instance.tags.get("hostclass", "-") in hostclasses]
+        return [
+            instance
+            for instance in self.instances()
+            if instance.tags.get("hostclass", "-") in hostclasses
+        ]
 
     def instances_from_amis(self, ami_ids):
         """Returns instances matching any of a list of AMI ids"""
         return self.instances(filters={"image_id": ami_ids})
+
+    def instances_from_asgs(self, asgs):
+        """Returns instances matching any of a list of autoscaling group names"""
+        return [
+            instance
+            for instance in self.instances()
+            if instance.tags.get("aws:autoscaling:groupName", "-") in asgs
+        ]
 
     def spindown(self, hostclasses):
         """
@@ -614,9 +640,6 @@ class DiscoAWS(object):
               },
             ...]
         """
-
-        self.autoscale.clean_configs()
-
         # If AMI specified lookup hostclass from AMI else lookup AMI from hostclass
         stage = stage if stage else self.vpc.ami_stage()
         bake = DiscoBake(self._config, self.connection)

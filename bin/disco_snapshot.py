@@ -5,8 +5,9 @@ Command line tool for dealing with ELB snapshots
 from __future__ import print_function
 import argparse
 
-from disco_aws_automation import DiscoAWS, read_config
+from disco_aws_automation import DiscoAWS
 from disco_aws_automation.disco_aws_util import run_gracefully
+from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
 
 
@@ -31,6 +32,8 @@ def get_parser():
     parser_create.add_argument('--size', dest='size', required=True, type=int, help='Volume size in GB')
     parser_create.add_argument('--hostclass', dest='hostclass', type=str,
                                help="hostclass that uses this snapshot")
+    parser_create.add_argument('--unencrypted', action='store_true',
+                               help='create unencrypted volume and snapshot')
 
     parser_list = subparsers.add_parser('list', help='List all EBS snapshots')
     parser_list.set_defaults(mode='list')
@@ -89,7 +92,8 @@ def run():
 
     aws = DiscoAWS(config, environment_name=environment_name)
     if args.mode == "create":
-        aws.disco_storage.create_ebs_snapshot(args.hostclass, args.size)
+        product_line = aws.hostclass_option_default(args.hostclass, 'product_line', 'unknown')
+        aws.disco_storage.create_ebs_snapshot(args.hostclass, args.size, product_line, not args.unencrypted)
     elif args.mode == "list":
         for snapshot in aws.disco_storage.get_snapshots(args.hostclasses):
             print("{0:26} {1:13} {2:9} {3} {4:4}".format(

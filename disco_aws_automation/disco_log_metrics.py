@@ -7,7 +7,7 @@ from ConfigParser import ConfigParser
 
 import boto3
 
-from . import normalize_path
+from .disco_config import normalize_path
 from .resource_helper import throttled_call
 
 logger = logging.getLogger(__name__)

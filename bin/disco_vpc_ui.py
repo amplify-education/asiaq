@@ -28,6 +28,9 @@ def parse_arguments():
                                help='What to call the new environment.')
     parser_create.add_argument('--type', dest='vpc_type', required=True,
                                help='What type of environment to create (as defined in config).')
+    parser_create.add_argument('--skip-enis', dest='skip_enis', action='store_const',
+                               const=True, default=False,
+                               help="Skip pre-allocating ENIs with static IPs used by hostclasses.")
 
     parser_destroy = subparsers.add_parser(
         'destroy', help='Delete environment releasing all non-persistent resources.')
@@ -82,7 +85,7 @@ def create_vpc_command(args):
         print("VPC with same name already exists.")
         sys.exit(1)
     else:
-        vpc = DiscoVPC(args.vpc_name, args.vpc_type)
+        vpc = DiscoVPC(args.vpc_name, args.vpc_type, skip_enis_pre_allocate=args.skip_enis)
         print("VPC {0}({1}) has been created".format(args.vpc_name, vpc.get_vpc_id()))
 
 
@@ -129,17 +132,20 @@ def proxy_peerings_command(args):
         print("Don't use vpc_name and vpc_id at the same time.")
         sys.exit(2)
 
+    vpc = None
     if args.vpc_name:
-        vpc_id = DiscoVPC.find_vpc_id_by_name(args.vpc_name)
+        vpc = DiscoVPC.fetch_environment(environment_name=args.vpc_name)
     elif args.vpc_id:
-        vpc_id = args.vpc_id
-    else:
-        vpc_id = None
+        vpc = DiscoVPC.fetch_environment(vpc_id=args.vpc_id)
+
+    vpc_id = vpc.get_vpc_id() if vpc else None
+
+    disco_peerings = DiscoVPCPeerings()
 
     if args.list_peerings:
         vpc_map = {vpc['id']: vpc for vpc in DiscoVPC.list_vpcs()}
         peerings = sorted(
-            DiscoVPCPeerings.list_peerings(vpc_id, include_failed=True),
+            disco_peerings.list_peerings(vpc_id, include_failed=True),
             key=lambda p: vpc_map.get(p['AccepterVpcInfo']['VpcId'])['tags'].get("Name"))
 
         for peering in peerings:
@@ -156,10 +162,9 @@ def proxy_peerings_command(args):
                     peering['RequesterVpcInfo'].get('CidrBlock')))
             print(line)
     elif args.delete_peerings:
-        DiscoVPCPeerings.delete_peerings(vpc_id)
+        disco_peerings.delete_peerings(vpc_id)
     elif args.create_peerings:
-        peering_configs = DiscoVPCPeerings.parse_peerings_config(vpc_id)
-        DiscoVPCPeerings.create_peering_connections(peering_configs)
+        disco_peerings.update_peering_connections(vpc)
 
 
 def run():

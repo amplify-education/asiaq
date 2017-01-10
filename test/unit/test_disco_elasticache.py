@@ -2,7 +2,7 @@
 Tests of disco_elasticache
 """
 from unittest import TestCase
-from mock import MagicMock, PropertyMock, call
+from mock import MagicMock, call, patch
 from disco_aws_automation import DiscoElastiCache
 from test.helpers.matchers import MatchAnything
 from test.helpers.patch_disco_aws import get_mock_config
@@ -42,15 +42,9 @@ def _get_mock_route53():
     return route53
 
 
-class DiscoElastiCacheTests(TestCase):
-    """Test DiscoElastiCache"""
-
-    def setUp(self):
-        self.elasticache = DiscoElastiCache(
-            vpc=_get_mock_vpc(), aws=_get_mock_aws(), route53=_get_mock_route53())
-        self.elasticache.route53 = MagicMock()
-
-        DiscoElastiCache.config = PropertyMock(return_value=get_mock_config({
+def _get_config(*_args, **_kwargs):
+    return get_mock_config(
+        {
             'unittest:new-cache': {
                 'instance_type': 'cache.m1.small',
                 'engine': 'redis',
@@ -70,7 +64,19 @@ class DiscoElastiCacheTests(TestCase):
                 'num_nodes': '5',
                 'auto_failover': 'true'
             }
-        }))
+        }
+    )
+
+
+@patch('disco_aws_automation.disco_elasticache.read_config', _get_config)
+class DiscoElastiCacheTests(TestCase):
+    """Test DiscoElastiCache"""
+
+    def setUp(self):
+        self.elasticache = DiscoElastiCache(
+            vpc=_get_mock_vpc(), aws=_get_mock_aws(), route53=_get_mock_route53())
+        self.elasticache.route53 = MagicMock()
+
         self.elasticache.conn = MagicMock()
 
         self.replication_groups = [
@@ -156,7 +162,7 @@ class DiscoElastiCacheTests(TestCase):
         self.assertEquals(set(['unittest-old-cache', 'unittest-cache2']), set(ids))
 
     def test_create_redis_cluster(self):
-        """Test modifying a redis cluster"""
+        """Test creating a redis cluster"""
         self.elasticache.update('new-cache')
 
         self.elasticache.conn.create_replication_group.assert_called_once_with(

@@ -44,12 +44,13 @@ class DiscoELBTests(TestCase):
         self.acm.get_certificate_arn.return_value = TEST_CERTIFICATE_ARN_ACM
         self.iam.get_certificate_arn.return_value = TEST_CERTIFICATE_ARN_IAM
 
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments, R0914
     def _create_elb(self, hostclass=TEST_HOSTCLASS, public=False, tls=False,
                     instance_protocol='HTTP', instance_port=80,
                     elb_protocols='HTTP', elb_ports='80',
                     idle_timeout=None, connection_draining_timeout=None,
-                    sticky_app_cookie=None, existing_cookie_policy=None, testing=False):
+                    sticky_app_cookie=None, existing_cookie_policy=None, testing=False,
+                    cross_zone_load_balancing=True, cert_name=None):
         sticky_policies = [existing_cookie_policy] if existing_cookie_policy else []
         mock_describe = MagicMock(return_value={'PolicyDescriptions': sticky_policies})
         self.disco_elb.elb_client.describe_load_balancer_policies = mock_describe
@@ -68,11 +69,13 @@ class DiscoELBTests(TestCase):
             sticky_app_cookie=sticky_app_cookie,
             idle_timeout=idle_timeout,
             connection_draining_timeout=connection_draining_timeout,
+            cert_name=cert_name,
             tags={
                 'environment': TEST_ENV_NAME,
                 'hostclass': hostclass,
                 'is_testing': '1' if testing else '0'
-            }
+            },
+            cross_zone_load_balancing=cross_zone_load_balancing
         )
 
     @mock_elb
@@ -182,6 +185,65 @@ class DiscoELBTests(TestCase):
             Scheme='internal')
 
     @mock_elb
+    def test_get_elb_with_tls_and_cert_name(self):
+        """Test creation an ELB with TLS and a specific cert name"""
+        elb_client = self.disco_elb.elb_client
+        elb_client.create_load_balancer = MagicMock(wraps=elb_client.create_load_balancer)
+
+        def _get_certificate_arn(name):
+            if name == 'foo.com':
+                return 'arn:aws:acm::foo:com'
+            else:
+                return TEST_CERTIFICATE_ARN_ACM
+
+        self.acm.get_certificate_arn.side_effect = _get_certificate_arn
+
+        self._create_elb(tls=True, cert_name='foo.com')
+        elb_client.create_load_balancer.assert_called_once_with(
+            LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
+            Listeners=[{
+                'Protocol': 'HTTPS',
+                'LoadBalancerPort': 443,
+                'InstanceProtocol': 'HTTP',
+                'InstancePort': 80,
+                'SSLCertificateId': 'arn:aws:acm::foo:com'
+            }],
+            Subnets=[],
+            SecurityGroups=['sec-1'],
+            Scheme='internal'
+        )
+
+    @mock_elb
+    def test_get_elb_cert_name_not_found(self):
+        """Test creation an ELB with TLS and a specific cert name that doesn't exist"""
+        elb_client = self.disco_elb.elb_client
+        elb_client.create_load_balancer = MagicMock(wraps=elb_client.create_load_balancer)
+
+        def _get_certificate_arn(name):
+            if name == 'foo.com':
+                return None
+            else:
+                return TEST_CERTIFICATE_ARN_ACM
+
+        self.acm.get_certificate_arn.side_effect = _get_certificate_arn
+        self.iam.get_certificate_arn.return_value = None
+
+        self._create_elb(tls=True, cert_name='foo.com')
+        elb_client.create_load_balancer.assert_called_once_with(
+            LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
+            Listeners=[{
+                'Protocol': 'HTTPS',
+                'LoadBalancerPort': 443,
+                'InstanceProtocol': 'HTTP',
+                'InstancePort': 80,
+                'SSLCertificateId': ''
+            }],
+            Subnets=[],
+            SecurityGroups=['sec-1'],
+            Scheme='internal'
+        )
+
+    @mock_elb
     def test_get_elb_with_tcp(self):
         """Test creation an ELB with TCP"""
         elb_client = self.disco_elb.elb_client
@@ -244,7 +306,8 @@ class DiscoELBTests(TestCase):
         client.modify_load_balancer_attributes.assert_called_once_with(
             LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
             LoadBalancerAttributes={'ConnectionDraining': {'Enabled': False, 'Timeout': 0},
-                                    'ConnectionSettings': {'IdleTimeout': 100}}
+                                    'ConnectionSettings': {'IdleTimeout': 100},
+                                    'CrossZoneLoadBalancing': {'Enabled': True}}
         )
 
     @mock_elb
@@ -257,7 +320,26 @@ class DiscoELBTests(TestCase):
 
         client.modify_load_balancer_attributes.assert_called_once_with(
             LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
-            LoadBalancerAttributes={'ConnectionDraining': {'Enabled': True, 'Timeout': 100}}
+            LoadBalancerAttributes={
+                'ConnectionDraining': {'Enabled': True, 'Timeout': 100},
+                'CrossZoneLoadBalancing': {'Enabled': True}
+            }
+        )
+
+    @mock_elb
+    def test_get_elb_no_cross_zone_lb(self):
+        """Test creating ELB without cross zone load balancing"""
+        client = self.disco_elb.elb_client
+        client.modify_load_balancer_attributes = MagicMock(wraps=client.modify_load_balancer_attributes)
+
+        self._create_elb(cross_zone_load_balancing=False)
+
+        client.modify_load_balancer_attributes.assert_called_once_with(
+            LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
+            LoadBalancerAttributes={
+                'ConnectionDraining': {'Enabled': False, 'Timeout': 0},
+                'CrossZoneLoadBalancing': {'Enabled': False}
+            }
         )
 
     @mock_elb

@@ -4,11 +4,11 @@ Parse disco_aws alarm configuration.
 
 import logging
 import copy
-from ConfigParser import ConfigParser
 
 from boto.ec2.cloudwatch import MetricAlarm
 
-from . import read_config, DiscoAutoscale
+from . import DiscoAutoscale
+from .disco_config import read_config
 from .exceptions import AlarmConfigError
 from .disco_aws_util import is_truthy
 from .disco_elb import DiscoELB
@@ -194,11 +194,7 @@ class DiscoAlarmsConfig(object):
     """
 
     def __init__(self, environment, config_file=None, autoscale=None, elasticsearch=None):
-        if config_file:
-            self.config = ConfigParser()
-            self.config.read(config_file)
-        else:
-            self.config = read_config(DEFAULT_CONFIG_FILE)
+        self.config = read_config(config_file=(config_file or DEFAULT_CONFIG_FILE), environment=environment)
         self.environment = environment
         self.elasticsearch = elasticsearch or None
         self._autoscale = autoscale or None  # laziliy intialized

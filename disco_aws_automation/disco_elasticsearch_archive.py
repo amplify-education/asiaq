@@ -18,7 +18,8 @@ from elasticsearch import (
 )
 from requests_aws4auth import AWS4Auth
 
-from . import read_config, DiscoElasticsearch, DiscoIAM
+from . import DiscoElasticsearch, DiscoIAM
+from .disco_config import read_config
 from .disco_aws_util import is_truthy
 from .exceptions import TimeoutError
 from .disco_constants import ES_CONFIG_FILE

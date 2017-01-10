@@ -166,20 +166,15 @@ class DiscoVPCGatewaysTests(unittest.TestCase):
             return ret
 
         meta_network_mock.side_effect = _meta_network_mock
-
-        eip = MagicMock()
-        eip.public_ip = "10.0.0.1"
-        self.disco_vpc_gateways.eip.allocate.return_value = eip
         # End of setting up test
 
         # Calling method under test
         self.disco_vpc_gateways.update_nat_gateways_and_routes()
 
         # Verifying correct behavior
-        network_intranet_mock.add_nat_gateway_route.assert_called_once_with(network_tunnel_mock)
-        network_tunnel_mock.add_nat_gateways.assert_called_once_with([
+        network_intranet_mock.upsert_nat_gateway_route.assert_called_once_with(network_tunnel_mock)
+        network_tunnel_mock.add_nat_gateways.assert_called_once_with(allocation_ids=[
             self.disco_vpc_gateways.eip.find_eip_address('eip').allocation_id,
             self.disco_vpc_gateways.eip.find_eip_address('eip').allocation_id,
             self.disco_vpc_gateways.eip.find_eip_address('eip').allocation_id
         ])
-        self.disco_vpc_gateways.eip.allocate.assert_any_call()
