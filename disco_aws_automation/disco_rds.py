@@ -414,7 +414,7 @@ class RDS(threading.Thread):
         # Create a DNS record for this instance
         self.setup_dns(instance_identifier)
 
-    def clone(self, source_vpc, source_db):
+    def clone(self, source_vpc, source_db, snapshot):
         """
         Clone the database in source_vpc into the current vpc. The vpc name of the current
         database would be the same as the source database.
@@ -445,8 +445,11 @@ class RDS(threading.Thread):
         # create a parameter group using the parameters of the source db
         self.recreate_db_parameter_group(source_vpc, source_db, group_name, group_family)
 
-        self.create_db_instance(instance_params,
-                                custom_snapshot=self.get_latest_snapshot(source_db_identifier))
+        if snapshot:
+            custom_snapshot = snapshot
+        else:
+            custom_snapshot = self.get_latest_snapshot(source_db_identifier);
+        self.create_db_instance(instance_params, custom_snapshot)
 
         # Create/Update CloudWatch Alarms for this instance
         self.spinup_alarms(source_db)

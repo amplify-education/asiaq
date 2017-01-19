@@ -69,6 +69,8 @@ def get_parser():
                               help='Name of the database to clone', type=str)
     parser_clone.add_argument('--source-env', dest='source_env', required=True,
                               help='Name of environment of source database', type=str)
+    parser_clone.add_argument('--snapshot', dest='snapshot', required=False,
+                              help='Snapshot to use.  If not provided, use latest.', type=str)
     return parser
 
 
@@ -107,7 +109,7 @@ def run():
     elif args.mode == "cleanup_snapshots":
         rds.cleanup_snapshots(args.days)
     elif args.mode == "clone":
-        rds.clone(args.source_env, args.source_db)
+        rds.clone(args.source_env, args.source_db, snapshot=args.snapshot)
 
 
 if __name__ == "__main__":
