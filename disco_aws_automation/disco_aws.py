@@ -16,7 +16,7 @@ import boto.ec2.autoscale
 from boto.exception import EC2ResponseError
 
 from .disco_log_metrics import DiscoLogMetrics
-from .disco_elb import DiscoELB
+from .disco_elb import DiscoELB, DiscoELBPortConfig
 from .disco_alarm import DiscoAlarm
 from .disco_autoscale import DiscoAutoscale
 from .disco_aws_util import (
@@ -286,9 +286,6 @@ class DiscoAWS(object):
                 str(recurrence), hostclass=hostclass, group_name=group_name,
                 min_size=sizes[0], desired_capacity=sizes[1], max_size=sizes[2])
 
-    def _default_protocol_for_port(self, port):
-        return {80: "HTTP", 443: "HTTPS"}.get(int(port)) or "TCP"
-
     # Pylint thinks that we have too many local variables, but we needs them.
     # pylint:  disable=too-many-locals
     def update_elb(self, hostclass, update_autoscaling=True, testing=False):
@@ -308,21 +305,13 @@ class DiscoAWS(object):
                 elb_subnets = self.get_subnets(elb_meta_network, hostclass)
                 subnet_ids = [subnet['SubnetId'] for subnet in elb_subnets]
 
-            elb_port = self.hostclass_option_default(hostclass, "elb_port", 80)
-            elb_protocol = self.hostclass_option_default(hostclass, "elb_protocol", None) or \
-                self._default_protocol_for_port(elb_port)
-            instance_port = int(self.hostclass_option_default(hostclass, "elb_instance_port", 80))
-            instance_protocol = self.hostclass_option_default(hostclass, "elb_instance_protocol", None) or \
-                self._default_protocol_for_port(instance_port)
-
             elb = self.elb.get_or_create_elb(
                 hostclass,
                 security_groups=[elb_meta_network.security_group.id],
                 subnets=subnet_ids,
                 hosted_zone_name=self.hostclass_option_default(hostclass, "domain_name"),
                 health_check_url=self.hostclass_option_default(hostclass, "elb_health_check_url"),
-                instance_protocol=instance_protocol, instance_port=instance_port,
-                elb_protocols=elb_protocol, elb_ports=elb_port,
+                port_config=DiscoELBPortConfig.from_config(self, hostclass),
                 elb_public=is_truthy(self.hostclass_option_default(hostclass, "elb_public", "no")),
                 sticky_app_cookie=self.hostclass_option_default(hostclass, "elb_sticky_app_cookie", None),
                 idle_timeout=int(self.hostclass_option_default(hostclass, "elb_idle_timeout", 300)),
