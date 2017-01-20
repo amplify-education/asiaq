@@ -448,7 +448,7 @@ class RDS(threading.Thread):
         if snapshot:
             custom_snapshot = snapshot
         else:
-            custom_snapshot = self.get_latest_snapshot(source_db_identifier);
+            custom_snapshot = self.get_latest_snapshot(source_db_identifier)
         self.create_db_instance(instance_params, custom_snapshot)
 
         # Create/Update CloudWatch Alarms for this instance
