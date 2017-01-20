@@ -34,7 +34,8 @@ class DiscoDeploy(object):
 
     # pylint: disable=too-many-arguments
     def __init__(self, aws, test_aws, bake, autoscale, elb, pipeline_definition,
-                 ami=None, hostclass=None, allow_any_hostclass=False, config=None):
+                 ami=None, hostclass=None, allow_any_hostclass=False, config=None,
+                 stage=None):
         '''
         Constructor for DiscoDeploy
 
@@ -56,6 +57,7 @@ class DiscoDeploy(object):
         self._disco_bake = bake
         self._disco_autoscale = autoscale
         self._disco_elb = elb
+        self._stage = stage
         self._all_stage_amis = None
         self._hostclasses = self._get_hostclasses_from_pipeline_definition(pipeline_definition)
         self._allow_any_hostclass = allow_any_hostclass
@@ -164,12 +166,20 @@ class DiscoDeploy(object):
         Hosts must be in the pipeline definition and marked as deployable and
         the AMI must be newer than the one currently running AMI for that host.
         '''
-        available = self.get_newest_in_either_map(
-            self.get_latest_tested_amis(), self.get_latest_untagged_amis())
-        newer = self.get_items_newer_in_second_map(self.get_latest_running_amis(), available)
-        return [ami for ami in newer
-                if (DiscoBake.ami_hostclass(ami) in self._hostclasses and
-                    self.is_deployable(DiscoBake.ami_hostclass(ami)))]
+        if self._restrict_amis:
+            logging.info("restricting to %s", self._restrict_amis)
+            return self.all_stage_amis  # sneaky way of just fetching the desired AMI
+        else:
+            if self._stage:
+                logging.info("Stage is %s", self._stage)
+                available = self.get_latest_ami_in_stage_dict(self._stage)
+            else:
+                available = self.get_newest_in_either_map(
+                    self.get_latest_tested_amis(), self.get_latest_untagged_amis())
+            newer = self.get_items_newer_in_second_map(self.get_latest_running_amis(), available)
+            return [ami for ami in newer
+                    if (DiscoBake.ami_hostclass(ami) in self._hostclasses and
+                        self.is_deployable(DiscoBake.ami_hostclass(ami)))]
 
     def is_deployable(self, hostclass):
         """Returns true for all hostclasses which aren't tagged as non-ZDD hostclasses"""
@@ -213,7 +223,12 @@ class DiscoDeploy(object):
         Promote AMI to specified stage. And, conditionally, make executable by
         production account if ami is staged as tested.
         """
-
+        if self._stage:
+            logging.info("No promotion allowed from manually specified stage %s", self._stage)
+            return
+        elif self._restrict_amis:
+            logging.info("Not promoting manually specified ami")
+            return
         prod_baker = self._disco_bake.option("prod_baker")
         promote_conditions = [
             stage == "tested",
@@ -807,7 +822,7 @@ class DiscoDeploy(object):
         if len(amis):
             self.update_ami(random.choice(amis), dry_run, deployment_strategy)
         else:
-            logger.info("No new 'tested' AMIs found.")
+            logging.info("No eligible AMIs found: nothing to update.")
 
     def hostclass_option(self, hostclass, key):
         '''

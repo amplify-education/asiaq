@@ -7,7 +7,7 @@ Usage:
                     [--environment ENV] [--ami AMI | --hostclass HOSTCLASS] [--allow-any-hostclass]
                     [--strategy STRATEGY]
     disco_deploy.py [options] update --pipeline PIPELINE --environment ENV
-                    [--ami AMI | --hostclass HOSTCLASS] [--allow-any-hostclass] [--strategy STRATEGY]
+                    [--ami AMI | --hostclass HOSTCLASS] [--allow-any-hostclass] [--strategy STRATEGY] [--stage STAGE]
     disco_deploy.py [options] list (--tested|--untested|--failed|--failures|--testable)
                     [--pipeline PIPELINE] [--environment ENV] [--ami AMI | --hostclass HOSTCLASS]
                     [--allow-any-hostclass]
@@ -31,6 +31,7 @@ Options:
      --pipeline PIPELINE    File name of the pipeline definition
      --ami AMI              Limit command to a specific AMI
      --hostclass HOSTCLASS  Limit command to a specific hostclass
+     --stage STAGE          Limit command (currently only "update") to AMIs in a specific stage
      --environment ENV      Environment to operate in
      --allow-any-hostclass  Do not limit command to hostclasses defined in pipeline
      --strategy STRATEGY    The deployment strategy to use. Currently supported: 'classic' or 'blue_green'.
@@ -90,7 +91,9 @@ def run():
         aws, test_aws, DiscoBake(config, aws.connection), DiscoAutoscale(env), DiscoELB(vpc),
         pipeline_definition=pipeline_definition,
         ami=args.get("--ami"), hostclass=args.get("--hostclass"),
-        allow_any_hostclass=args["--allow-any-hostclass"])
+        allow_any_hostclass=args["--allow-any-hostclass"],
+        stage=args.get("--stage")
+        )
 
     if args["test"]:
         deploy.test(dry_run=args["--dry-run"], deployment_strategy=args["--strategy"])
