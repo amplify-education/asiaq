@@ -665,7 +665,7 @@ class DiscoRDS(object):
         except botocore.exceptions.ClientError:
             return None
 
-    def clone(self, source_vpc, source_db):
+    def clone(self, source_vpc, source_db, snapshot):
         """
         Spinup a copy of a given database into the current environment
 
@@ -689,4 +689,4 @@ class DiscoRDS(object):
                   rds_security_group_id,
                   subnet_ids, self.domain_name)
 
-        rds.clone(source_vpc, source_db)
+        rds.clone(source_vpc, source_db, snapshot)
