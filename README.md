@@ -1468,6 +1468,17 @@ you can run this command:
 There are also commands to list, cleanup, delete and capture snapshots
 which work how you would expect them to work.
 
+When capturing a new snapshot the following tags are added automatically to the snapshot:
+-   `hostclass` The hostclass name associated with the volume
+-   `env` The environment of the associated with the volume
+-   `productline` The productline of the associated with the volume
+
+You can also add your own tags using the --tag option.
+For example the following command capture a new snapshot and tag the snapshot
+using the tag Key "disk_usage" and the tag value 400MB
+
+    disco_snapshot.py --env production --volume-id vol-001 --tag disk-usage:400MB
+
 There is also a create command that allows you to create the initial
 EBS volume snapshot for a hostclass. This initial volume will not be
 formatted. The volume created and its snapshot will be encrypted by default.
