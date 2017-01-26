@@ -1468,6 +1468,17 @@ you can run this command:
 There are also commands to list, cleanup, delete and capture snapshots
 which work how you would expect them to work.
 
+When capturing a new snapshot the following tags are added automatically to the snapshot:
+-   `hostclass` The hostclass name associated with the volume
+-   `env` The environment of the associated with the volume
+-   `productline` The productline of the associated with the volume
+
+You can also add your own tags using the --tag option.
+For example the following command capture a new snapshot and tag the snapshot
+using the tag Key "disk_usage" and the tag value 400MB
+
+    disco_snapshot.py --env production --volume-id vol-001 --tag disk-usage:400MB
+
 There is also a create command that allows you to create the initial
 EBS volume snapshot for a hostclass. This initial volume will not be
 formatted. The volume created and its snapshot will be encrypted by default.
@@ -1897,10 +1908,10 @@ Options:
 -   `domain_name` Top level domain name to use as a suffix for all ELB domain names
 -   `elb` Create an ELB for this hostclass
 -   `elb_meta_network` [Optional] Meta network to run ELB in, defaults to same meta network as instances
--   `elb_health_check_url` [Default /] The heartbeat end-point to test instance health
--   `elb_instance_port` [Default=80] The port number that your services are running on
--   `elb_instance_protocol` [Default inferred from port] HTTP | HTTPS | SSL | TCP
--   `elb_port` [Default=80] Comma separated list of port numbers to expose in the ELB.
+-   `elb_health_check_url` [Default /] The heartbeat end-point to test instance health.  Note that if you have multiple port mappings, the health check will use the first mapping using HTTP(S) on the instance side.  If there are no HTTP(S) mappings, the health check will use the first mapping.
+-   `elb_instance_port` [Default inferred from protocol] A comma separated list of port numbers that your services are running on
+-   `elb_instance_protocol` [Default inferred from port] A comma separated list of instance protocols.  The protocols should be in the same order as the instance ports. HTTP | HTTPS | SSL | TCP
+-   `elb_port` [Default inferred from protocol] Comma separated list of port numbers to expose in the ELB.
 -   `elb_protocol` [Default inferred from port] Comma separated list of protocols to expose from ELB. The protocols should be in the same order as the ELB ports. HTTP | HTTPS | SSL | TCP
 -   `elb_public` [Default no] yes | no Should the ELB have a publicly routable IP
 -   `elb_sticky_app_cookie` [Optional] Enable sticky sessions by setting the session cookie of your application

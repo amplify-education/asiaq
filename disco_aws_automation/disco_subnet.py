@@ -101,6 +101,11 @@ class DiscoSubnet(object):
                                        'tag:meta_network': [self.metanetwork.name]})
         }
 
+    @property
+    def subnet_id(self):
+        """Returns AWS subnet ID"""
+        return self._subnet_dict['SubnetId']
+
     def recreate_route_table(self):
         """ Re-create the route table with all the routes from the current route table """
         new_route_table = self._create_route_table()

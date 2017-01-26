@@ -4,10 +4,10 @@ import copy
 from unittest import TestCase
 
 import boto3
-from mock import Mock, MagicMock
+from mock import Mock, MagicMock, patch
 
 from disco_aws_automation.disco_datapipeline import (
-    AsiaqDataPipeline, AsiaqDataPipelineManager, template_to_boto, add_log_location_param)
+    AsiaqDataPipeline, AsiaqDataPipelineManager, template_to_boto, add_default_object_fields)
 from disco_aws_automation import exceptions as asiaq_exceptions
 
 
@@ -55,6 +55,66 @@ class DataPipelineTest(TestCase):
             tags=[{'key': 'template', 'stringValue': 'conflict'}])
         self.assertRaises(asiaq_exceptions.DataPipelineFormatException, pipeline.get_tag_dict)
 
+    def test__last_run__no_metadata__state_exception(self):
+        "AsiaqDataPipeline.last_run fails appropriately when no metadata is set"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY")
+        with self.assertRaises(asiaq_exceptions.DataPipelineStateException):
+            _ = pipeline.last_run
+
+    def test__last_run__no_field__none_returned(self):
+        "AsiaqDataPipeline.last_run is None when metadata does not include last-run"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[{'key': '@foo', 'stringValue': 'bar'}])
+        self.assertIsNone(pipeline.last_run)
+
+    def test__last_run__valid_date__datetime_returned(self):
+        "AsiaqDataPipeline.last_run is a correct datetime"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[
+            {'key': '@latestRunTime', 'stringValue': '1978-08-05T08:00:00'}])
+        self.assertEquals(1978, pipeline.last_run.year)
+        self.assertEquals(8, pipeline.last_run.month)
+        self.assertEquals(5, pipeline.last_run.day)
+        self.assertEquals(8, pipeline.last_run.hour)
+        self.assertEquals(0, pipeline.last_run.utcoffset().total_seconds())
+
+    def test__health__no_field__none_returned(self):
+        "AsiaqDataPipeline.health is none if the field is absent"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[{'key': '@foo', 'stringValue': 'bar'}])
+        self.assertIsNone(pipeline.health)
+
+    def test__health__field_set__value_found(self):
+        "AsiaqDataPipeline.health is found if set"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[
+            {'key': '@healthStatus', 'stringValue': 'SUPERHEALTHY'}])
+        self.assertEquals('SUPERHEALTHY', pipeline.health)
+
+    def test__pipeline_state__field_absent__exception(self):
+        "AsiaqDataPipeline.pipeline_state causes an exception if not set"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[{'key': '@foo', 'stringValue': 'bar'}])
+        with self.assertRaises(KeyError):
+            _ = pipeline.pipeline_state
+
+    def test__pipeline_state__field_set__value_found(self):
+        "AsiaqDataPipeline.pipeline_state is found if set"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[
+            {'key': '@pipelineState', 'stringValue': 'NIFTY'}])
+        self.assertEquals('NIFTY', pipeline.pipeline_state)
+
+    def test__create_date__field_absent__exception(self):
+        "AsiaqDataPipeline.create_date causes an exception if not set"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[{'key': '@foo', 'stringValue': 'bar'}])
+        with self.assertRaises(KeyError):
+            _ = pipeline.create_date
+
+    def test__create_date__field_set__datetime_found(self):
+        "AsiaqDataPipeline.create_date is a correct datetime"
+        pipeline = AsiaqDataPipeline("TEST", "TESTY", metadata=[
+            {'key': '@creationTime', 'stringValue': '2008-01-20T17:00:00'}])
+        self.assertEquals(2008, pipeline.create_date.year)
+        self.assertEquals(1, pipeline.create_date.month)
+        self.assertEquals(20, pipeline.create_date.day)
+        self.assertEquals(17, pipeline.create_date.hour)
+        self.assertEquals(0, pipeline.create_date.utcoffset().total_seconds())
+
     def test__get_param_value_dict__duplicate_value__exception(self):
         "AsiaqDataPipeline.get_param_value_dict with a duplicate value definition"
         pipeline = AsiaqDataPipeline(name="asdf", description="qwerty", param_values=[
@@ -80,6 +140,24 @@ class DataPipelineTest(TestCase):
         self.assertEquals(pipeline._name, "asdf")
         self.assertEquals(pipeline._description, "qwerty")
 
+    def test__from_template__log_and_subnet_fields__fields_set(self):
+        "AsiaqDataPipeline.from_template with a log location and subnet ID"
+        pipeline = AsiaqDataPipeline.from_template(
+            name="asdf", description="qwerty", template_name="dynamodb_backup",
+            log_location="FAKEY", subnet_id="McFAKEFAKE")
+        self.assertFalse(pipeline._tags)
+        self.assertFalse(pipeline.is_persisted())
+        self.assertTrue(pipeline.has_content())
+
+        def _find_default(objects):
+            for obj in objects:
+                if obj['id'] == 'Default':
+                    return obj
+
+        default_object = _find_default(pipeline._objects)
+        self.assertIn({'key': 'pipelineLogUri', 'stringValue': 'FAKEY'}, default_object['fields'])
+        self.assertIn({'key': 'subnetId', 'stringValue': 'McFAKEFAKE'}, default_object['fields'])
+
     def test__update_content__no_values__content_updated(self):
         "AsiaqDataPipeline.update_content with no parameter values"
         pipeline = AsiaqDataPipeline(name="asdf", description="qwerty")
@@ -89,6 +167,41 @@ class DataPipelineTest(TestCase):
         self.assertIs(pipeline._objects, pipeline_objects)
         self.assertIs(pipeline._params, param_defs)
         self.assertIsNone(pipeline._param_values)
+
+    def test__update_content__new_and_old_values__values_updated(self):
+        "AsiaqDataPipeline.update_content overwrites parameter values when appropriate"
+        orig_values = {'this': 'will', 'be': 'overwritten'}
+        pipeline = AsiaqDataPipeline(name="asdf", description="qwerty", param_values=orig_values)
+        new_values = {'foo': 'bar', 'baz': '1'}
+        pipeline_objects = Mock()
+        param_defs = Mock()
+        pipeline.update_content(pipeline_objects, param_defs, new_values)
+        self.assertEquals([{'id': 'foo', 'stringValue': 'bar'}, {'id': 'baz', 'stringValue': '1'}],
+                          pipeline._param_values)
+
+    def test__update_content__old_values_not_new_ones__values_unchanged(self):
+        "AsiaqDataPipeline.update_content does not overwrite parameter values when not appropriate"
+        orig_values = {'this': 'will not', 'be': 'overwritten'}
+        pipeline = AsiaqDataPipeline(name="asdf", description="qwerty", param_values=orig_values)
+        pipeline_objects = Mock()
+        param_defs = Mock()
+        pipeline.update_content(pipeline_objects, param_defs)
+        self.assertEquals(
+            [{'id': 'this', 'stringValue': 'will not'}, {'id': 'be', 'stringValue': 'overwritten'}],
+            pipeline._param_values
+        )
+
+    def test__update_content__old_values_new_empty__values_cleared(self):
+        "AsiaqDataPipeline.update_content does not overwrite parameter values when not appropriate"
+        orig_values = {'this': 'will', 'be': 'overwritten'}
+        pipeline = AsiaqDataPipeline(name="asdf", description="qwerty", param_values=orig_values)
+        pipeline_objects = Mock()
+        param_defs = Mock()
+        pipeline.update_content(pipeline_objects, param_defs, [])
+        self.assertEquals(
+            [],
+            pipeline._param_values
+        )
 
     def test__update_content__dict_values__content_updated(self):
         "AsiaqDataPipeline.update_content with silly dictionary parameter values"
@@ -127,6 +240,17 @@ class DataPipelineTest(TestCase):
         pipeline.update_content(template_name="dynamodb_restore")
         self.assertTrue(pipeline.has_content())
         self.assertEquals("DDBDestinationTable", pipeline._objects[1]['id'])
+
+    def test__update_content__log_location_and_subnet__fields_set(self):
+        "AsiaqDataPipeline.update_content with log location and subnet ID"
+        pipeline = AsiaqDataPipeline(name="asdf", description="qwerty")
+        new_contents = [
+            {'id': 'Default', 'fields': [{'key': 'uninteresting', 'stringValue': 'thing'}], 'name': 'short'},
+            {'id': 'Other', 'fields': [], 'name': 'unused'}
+        ]
+        pipeline.update_content(log_location='FAKEFAKE', subnet_id='EVENFAKER', contents=new_contents)
+        self.assertIn({'key': 'pipelineLogUri', 'stringValue': 'FAKEFAKE'}, pipeline._objects[0]['fields'])
+        self.assertIn({'key': 'subnetId', 'stringValue': 'EVENFAKER'}, pipeline._objects[0]['fields'])
 
     def test__update_content__bad_args__error(self):
         "AsiaqDataPipeline.update_content with bad argument combinations fails"
@@ -368,6 +492,24 @@ class DataPipelineManagerTest(TestCase):
         self.assertIn({'id': 'qwerty', 'stringValue': 'asdf'}, activate_args['parameterValues'])
         self.assertIn('startTimestamp', activate_args)
 
+    @patch('disco_aws_automation.disco_datapipeline.datetime')
+    def test__start__no_time_given__utcnow_called(self, datetime):
+        "AsiaqDataPipelineManager.start with no start time uses utcnow"
+        fake_now = Mock()
+        datetime.utcnow = Mock(return_value=fake_now)
+        self.mgr.start(self._persisted_pipeline())
+        self.assertEquals(1, self.mock_client.activate_pipeline.call_count)
+        activate_args = self.mock_client.activate_pipeline.call_args[1]
+        self.assertEquals(fake_now, activate_args['startTimestamp'])
+
+    def test__start__time_passed__time_used(self):
+        "AsiaqDataPipelineManager.start with passed-in start time uses passed-in value"
+        start_time = Mock()
+        self.mgr.start(self._persisted_pipeline(), start_time=start_time)
+        self.assertEquals(1, self.mock_client.activate_pipeline.call_count)
+        activate_args = self.mock_client.activate_pipeline.call_args[1]
+        self.assertEquals(start_time, activate_args['startTimestamp'])
+
     def test__stop__unpersisted__error(self):
         "AsiaqDataPipelineManager.stop with a detached object: error"
         self.assertRaises(asiaq_exceptions.DataPipelineStateException,
@@ -479,18 +621,19 @@ class PipelineUtilityTest(TestCase):
         for expected_attr in expected:
             self.assertIn(expected_attr, attrs_found)
 
-    def test__add_log_location_param__no_default__error(self):
-        "add_log_location_param: invalid input produces an exception"
+    def test__add_default_object_fields__no_default__error(self):
+        "add_default_object_fields: invalid input produces an exception"
         object_list = [
             {'id': 'foo', 'name': 'bar', 'fields': []}, {'id': 'bar', 'name': 'baz', 'fields': []}
         ]
+        added_fields = {'pipelineLogUri': self.FAKE_S3_URL}
         backup_list = copy.deepcopy(object_list)
         self.assertRaises(asiaq_exceptions.DataPipelineFormatException,
-                          add_log_location_param, object_list, self.FAKE_S3_URL)
+                          add_default_object_fields, object_list, added_fields)
         self.assertEquals(backup_list, object_list)
 
-    def test__add_log_location_param__existing_value__update(self):
-        "add_log_location_param: existing log location gets updated"
+    def test__add_default_object_fields__existing_value__update(self):
+        "add_default_object_fields: existing log location gets updated"
         object_list = [
             {'id': 'foo', 'name': 'bar', 'fields': []},
             {'id': 'Default', 'name': 'Deffy', 'fields': [
@@ -499,13 +642,14 @@ class PipelineUtilityTest(TestCase):
             ]},
             {'id': 'bar', 'name': 'baz', 'fields': []}
         ]
+        added_fields = {'pipelineLogUri': self.FAKE_S3_URL}
         backup_list = copy.deepcopy(object_list)
-        add_log_location_param(object_list, self.FAKE_S3_URL)
+        add_default_object_fields(object_list, added_fields)
         self.assertNotEquals(backup_list, object_list)
         self.assertEquals(self.FAKE_S3_URL, object_list[1]['fields'][0]['stringValue'])
 
-    def test__add_log_location_param__no_value__insert(self):
-        "add_log_location_param: missing log location gets inserted"
+    def test__add_default_object_fields__no_value__insert(self):
+        "add_default_object_fields: missing log location gets inserted"
         object_list = [
             {'id': 'foo', 'name': 'bar', 'fields': []},
             {'id': 'Default', 'name': 'Deffy', 'fields': [
@@ -513,7 +657,27 @@ class PipelineUtilityTest(TestCase):
             ]},
             {'id': 'bar', 'name': 'baz', 'fields': []}
         ]
+        added_fields = {'fakeParam': self.FAKE_S3_URL}
         backup_list = copy.deepcopy(object_list)
-        add_log_location_param(object_list, self.FAKE_S3_URL)
+        add_default_object_fields(object_list, added_fields)
         self.assertNotEquals(backup_list, object_list)
+        self.assertEquals('fakeParam', object_list[1]['fields'][1]['key'])
         self.assertEquals(self.FAKE_S3_URL, object_list[1]['fields'][1]['stringValue'])
+
+    def test__add_default_object_fields__new_and_existing_values__insert_and_update(self):
+        "add_default_object_fields: existing log location gets updated, new field gets added"
+        default_fields = [
+            {'key': 'pipelineLogUri', 'stringValue': 's3://stupid-bucket'},
+            {'key': 'scheduleType', 'refValue': 'DailySchedule'}
+        ]
+        object_list = [
+            {'id': 'foo', 'name': 'bar', 'fields': []},
+            {'id': 'Default', 'name': 'Deffy', 'fields': default_fields},
+            {'id': 'bar', 'name': 'baz', 'fields': []}
+        ]
+        added_fields = {'pipelineLogUri': self.FAKE_S3_URL, 'newThing': 'newValue'}
+        backup_list = copy.deepcopy(object_list)
+        add_default_object_fields(object_list, added_fields)
+        self.assertNotEquals(backup_list, object_list)
+        self.assertEquals(self.FAKE_S3_URL, default_fields[0]['stringValue'])
+        self.assertEquals('newValue', default_fields[2]['stringValue'])

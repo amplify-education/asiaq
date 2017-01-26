@@ -13,7 +13,7 @@ from disco_aws_automation import DiscoBake, AMIError
 class DiscoBakeTests(TestCase):
     '''Test DiscoBake class'''
 
-    def mock_ami(self, name, stage=None, product_line=None, state=u'available'):
+    def mock_ami(self, name, stage=None, product_line=None, state=u'available', block_device_mapping=None):
         '''Create a mock AMI'''
         def _mock_get(tag_name, default=None):
             if tag_name == "productline":
@@ -26,6 +26,7 @@ class DiscoBakeTests(TestCase):
         ami.tags = MagicMock(get=_mock_get)
         ami.id = 'ami-' + ''.join(random.choice("0123456789abcdef") for _ in range(8))
         ami.state = state
+        ami.block_device_mapping = block_device_mapping or {}
         return ami
 
     def add_ami(self, name, stage, product_line=None, state=u'available'):
@@ -45,11 +46,11 @@ class DiscoBakeTests(TestCase):
         self._bake.get_ami_creation_time = DiscoBake.extract_ami_creation_time_from_ami_name
         self._amis = []
         self._amis_by_name = {}
-        self.add_ami('mhcfoo 1', 'untested', 'astro', 'unavailable')
-        self.add_ami('mhcbar 2', 'tested')
-        self.add_ami('mhcfoo 4', 'tested', 'astro')
-        self.add_ami('mhcfoo 5', 'failed')
-        self.add_ami('mhcbar 1', 'tested', 'someone_else', 'unavailable')
+        self.add_ami('mhcfoo 0000000001', 'untested', 'astro', 'unavailable')
+        self.add_ami('mhcbar 0000000002', 'tested')
+        self.add_ami('mhcfoo 0000000004', 'tested', 'astro')
+        self.add_ami('mhcfoo 0000000005', 'failed')
+        self.add_ami('mhcbar 0000000001', 'tested', 'someone_else', 'unavailable')
         self._bake.get_amis = MagicMock(return_value=self._amis)
 
     def test_get_phase1_ami_id_success(self):
@@ -76,28 +77,51 @@ class DiscoBakeTests(TestCase):
         '''Test that list amis can filter by product line successfully'''
         self.assertEqual(
             self._bake.list_amis(product_line="astro"), [
-                self._amis_by_name["mhcfoo 1"],
-                self._amis_by_name["mhcfoo 4"]])
+                self._amis_by_name["mhcfoo 0000000001"],
+                self._amis_by_name["mhcfoo 0000000004"]])
 
     def test_list_amis_by_stage(self):
         '''Test that list amis can filter by stage successfully'''
         self.assertEqual(self._bake.list_amis(stage="failed"),
-                         [self._amis_by_name["mhcfoo 5"]])
+                         [self._amis_by_name["mhcfoo 0000000005"]])
 
     def test_list_amis_by_state(self):
         '''Test that list amis can filter by state successfully'''
         self.assertEqual(self._bake.list_amis(state="unavailable"),
-                         [self._amis_by_name["mhcfoo 1"],
-                          self._amis_by_name["mhcbar 1"]])
+                         [self._amis_by_name["mhcfoo 0000000001"],
+                          self._amis_by_name["mhcbar 0000000001"]])
 
     def test_list_amis_by_hostclass(self):
         '''Test that list amis can filter by hostclass successfully'''
         self.assertEqual(self._bake.list_amis(hostclass="mhcfoo"),
-                         [self._amis_by_name["mhcfoo 1"],
-                          self._amis_by_name["mhcfoo 4"],
-                          self._amis_by_name["mhcfoo 5"]])
+                         [self._amis_by_name["mhcfoo 0000000001"],
+                          self._amis_by_name["mhcfoo 0000000004"],
+                          self._amis_by_name["mhcfoo 0000000005"]])
 
     def test_list_amis_by_productline_and_stage(self):
         '''Test that list amis can filter by productline and stage successfully'''
         self.assertEqual(self._bake.list_amis(stage="tested", product_line="someone_else"),
-                         [self._amis_by_name["mhcbar 1"]])
+                         [self._amis_by_name["mhcbar 0000000001"]])
+
+    def test_cleanup_amis(self):
+        '''Test that cleanup deletes AMIs'''
+        self._bake.cleanup_amis(None, None, 'tested', -1, 0, False, None)
+
+        for ami in self._amis:
+            print ami.name, ami.id, ami.tags.get('stage'), ami.deregister.called
+
+        self.assertTrue(self._amis_by_name["mhcbar 0000000001"].deregister.called)
+        self.assertTrue(self._amis_by_name["mhcbar 0000000002"].deregister.called)
+        self.assertTrue(self._amis_by_name["mhcfoo 0000000004"].deregister.called)
+
+    def test_cleanup_amis_exclude(self):
+        '''Test that cleanup ignores excluded AMIs'''
+        self._bake.cleanup_amis(None, None, 'tested', -1, 0, False,
+                                [self._amis_by_name["mhcbar 0000000002"].id])
+
+        for ami in self._amis:
+            print ami.name, ami.id, ami.tags.get('stage'), ami.deregister.called
+
+        self.assertTrue(self._amis_by_name["mhcbar 0000000001"].deregister.called)
+        self.assertFalse(self._amis_by_name["mhcbar 0000000002"].deregister.called)
+        self.assertTrue(self._amis_by_name["mhcfoo 0000000004"].deregister.called)

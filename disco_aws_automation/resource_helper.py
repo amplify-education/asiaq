@@ -124,7 +124,7 @@ def wait_for_state(resource, state, timeout=15 * 60, state_attr='state'):
                 raise ExpectedTimeoutError(
                     "{0} entered state {1} after {2}s waiting for state {3}"
                     .format(resource, current_state, time_passed, state))
-        except EC2ResponseError:
+        except (EC2ResponseError, BotoServerError):
             pass  # These are most likely transient, we will timeout if they are not
 
         if time_passed >= timeout:

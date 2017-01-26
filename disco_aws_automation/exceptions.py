@@ -43,7 +43,7 @@ class ProgrammerError(Exception):
 
 
 class AsiaqConfigError(EasyExit):
-    "An exception that results from a config file not being found (no stack trace needed)."
+    "An exception that results from a configuration problem (file or value not found; no stack trace needed)."
     pass
 
 

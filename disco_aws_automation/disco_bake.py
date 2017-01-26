@@ -9,6 +9,7 @@ import logging
 import getpass
 import re
 import time
+import uuid
 from os import path
 
 import boto
@@ -18,7 +19,7 @@ import dateutil.parser
 from pytz import UTC
 
 from .disco_config import normalize_path, read_config
-from .resource_helper import wait_for_sshable, keep_trying, wait_for_state
+from .resource_helper import wait_for_sshable, keep_trying, wait_for_state, throttled_call
 from .disco_storage import DiscoStorage
 from .disco_remote_exec import DiscoRemoteExec, SSH_DEFAULT_OPTIONS
 from .disco_vpc import DiscoVPC
@@ -198,7 +199,8 @@ class DiscoBake(object):
         Executes an init script that was dropped off by disco_aws_data.
         Hostclass and Hostname are passed in as arguments
         """
-        logger.info("Running remote init script %s.", script)
+        bake_id = uuid.uuid1().hex
+        logger.info("Running remote init script %s with bake_id %s.", script, bake_id)
         script = "{0}/init/{1}".format(self.option("data_destination"), script)
 
         repo = self.repo_instance()
@@ -208,7 +210,7 @@ class DiscoBake(object):
         else:
             repo_ip = self.repo_instance().private_ip_address
 
-        self.remotecmd(instance, [script, hostclass, repo_ip], log_on_error=True, forward_agent=True)
+        self.remotecmd(instance, [script, hostclass, repo_ip, bake_id], log_on_error=True, forward_agent=True)
 
     def ami_stages(self):
         """ Return list of configured ami stages"""
@@ -272,7 +274,7 @@ class DiscoBake(object):
         Raises an AMIError if we can't find the image
         """
         try:
-            return self.connection.get_image(ami_id)
+            return throttled_call(self.connection.get_image, ami_id)
         except:
             raise AMIError("Could not locate image {0}.".format(ami_id))
 
@@ -367,14 +369,19 @@ class DiscoBake(object):
         interfaces = self.vpc.networks["tunnel"].create_interfaces_specification(public_ip=True)
 
         image = None
+
         # Don't map the snapshot on bake.  Bake scripts shouldn't need the snapshotted volume.
-        reservation = self.connection.run_instances(
+        bake_profile = self.hc_option_default(hostclass, "bake_instance_profile", None)
+        device_map = self.disco_storage.configure_storage(hostclass, ami_id=source_ami_id, map_snapshot=False)
+        reservation = throttled_call(
+            self.connection.run_instances,
             source_ami_id,
-            block_device_map=self.disco_storage.configure_storage(
-                hostclass, ami_id=source_ami_id, map_snapshot=False),
+            block_device_map=device_map,
             instance_type=self.option("bakery_instance_type"),
             key_name=self.option("bake_key"),
-            network_interfaces=interfaces)
+            instance_profile_name=bake_profile,
+            network_interfaces=interfaces
+        )
         instance = reservation.instances[0]
         try:
             keep_trying(10, instance.add_tag, "hostclass", "bake_{0}".format(hostclass))
@@ -405,9 +412,14 @@ class DiscoBake(object):
             # to cause any problems.
             if is_truthy(enhanced_networking):
                 logger.info("Setting enhanced networking attribute")
-                self.connection.modify_instance_attribute(instance.id, "sriovNetSupport", "simple")
+                throttled_call(
+                    self.connection.modify_instance_attribute,
+                    instance.id,
+                    "sriovNetSupport",
+                    "simple"
+                )
 
-            image_id = instance.create_image(image_name, no_reboot=True)
+            image_id = throttled_call(instance.create_image, image_name, no_reboot=True)
             image = keep_trying(60, self.connection.get_image, image_id)
 
             stage = stage or self.ami_stages()[0]
@@ -424,7 +436,7 @@ class DiscoBake(object):
             raise
         finally:
             if not no_destroy:
-                instance.terminate()
+                throttled_call(instance.terminate)
             else:
                 logger.info("Examine instance command: "
                             "ssh -o UserKnownHostsFile=/dev/null root@%s",
@@ -479,15 +491,19 @@ class DiscoBake(object):
             amis, key=DiscoBake._ami_sort_key, reverse=True)
         return set(amis_sorted_by_creation_time_desc[max_count:])
 
-    def get_amis(self, image_ids=None, filters=None):
+    def get_amis(self, image_ids=None, filters=None, owners=None):
         """
         Returns images owned by a trusted account (including ourselves)
         """
         trusted_accounts = list(set(self.option_default("trusted_account_ids", "").split()) | set(['self']))
-        return self.connection.get_all_images(
-            image_ids=image_ids, owners=trusted_accounts, filters=filters)
+        return throttled_call(
+            self.connection.get_all_images,
+            image_ids=image_ids,
+            owners=owners or trusted_accounts, filters=filters
+        )
 
-    def cleanup_amis(self, restrict_hostclass, product_line, stage, min_age, min_count, dry_run):
+    def cleanup_amis(self, restrict_hostclass, product_line, stage, min_age, min_count, dry_run,
+                     excluded_amis):
         """
         Deletes oldest AMIs so long as they are older than min_age and there
         are at least min_count AMIs remaining in the hostclass.
@@ -497,6 +513,8 @@ class DiscoBake(object):
 
         If product_line is not None, then this will only iterate over amis tagged
         with that specific productline.
+
+        If excluded_amis has any items, they are excluded from deletion.
 
         """
         # Pylint complains that this function has one too many local variables.  But deleting any
@@ -509,7 +527,11 @@ class DiscoBake(object):
         if product_line:
             filters["tag:productline"] = product_line
 
-        amis = self.connection.get_all_images(owners=['self'], filters=filters)
+        amis = self.get_amis(filters=filters, owners=['self'])
+
+        if excluded_amis:
+            amis = [ami for ami in amis if ami.id not in excluded_amis]
+
         ami_map = defaultdict(list)
         for ami in amis:
             if AMI_NAME_PATTERN.match(ami.name):
@@ -604,7 +626,7 @@ class DiscoBake(object):
         Delete an AMI
         """
         logger.info("Deleting AMI %s", ami)
-        self.connection.deregister_image(ami, delete_snapshot=True)
+        throttled_call(self.connection.deregister_image, ami, delete_snapshot=True)
 
     def get_snapshots(self, ami):
         """Returns a snapshot object for an AMI object
@@ -614,7 +636,7 @@ class DiscoBake(object):
         snapshot_ids = [value.snapshot_id for _key, value in ami.block_device_mapping.iteritems()]
         ids = [snap for snap in snapshot_ids if snap]
         try:
-            return self.connection.get_all_snapshots(snapshot_ids=ids)
+            return throttled_call(self.connection.get_all_snapshots, snapshot_ids=ids)
         except boto.exception.EC2ResponseError:
             return []
 

@@ -156,7 +156,7 @@ class AsiaqDynamoDbBackupManager(object):
     def __init__(self, environment=None, config=None):
         self._environment = environment
         self._aws_config = config
-        self._mgr = AsiaqDataPipelineManager()
+        self._mgr = AsiaqDataPipelineManager(config=self.config)
         self._s3_client = None
         self.logger = getLogger(type(self).__name__)
         self._s3_bucket_name = None
@@ -188,7 +188,7 @@ class AsiaqDynamoDbBackupManager(object):
             self._s3_bucket_name = bucket_name
         return self._s3_bucket_name
 
-    def create_backup(self, table_name, start=True):
+    def create_backup(self, table_name, start=True, force_update=False, metanetwork=None):
         """
         Create a backup pipeline for the given table, and start it running (unless the
         'start' argument is False).
@@ -200,14 +200,16 @@ class AsiaqDynamoDbBackupManager(object):
         pipeline = self._mgr.fetch_or_create(self.BACKUP_PIPELINE_TEMPLATE, pipeline_name=pipeline_name,
                                              tags=tags,
                                              pipeline_description=pipeline_description,
-                                             log_location=self._s3_url("logs"))
+                                             log_location=self._s3_url("logs"),
+                                             metanetwork=metanetwork,
+                                             force_update=force_update)
         if start:
             param_values = self._get_table_params(table_name)
             param_values['myOutputS3Loc'] = self._s3_url(env, table_name)
             start_resp = self._mgr.start(pipeline, param_values)
             self.logger.debug("Started pipeline, got response %s", start_resp)
 
-    def restore_backup(self, table_name, backup_dir=None):
+    def restore_backup(self, table_name, backup_dir=None, force_update=False, metanetwork=None):
         """
         Create a backup-restore pipeline if needed, and activate it to restore a particular table from
         either a particular backup or the latest one.
@@ -224,7 +226,7 @@ class AsiaqDynamoDbBackupManager(object):
         pipeline = self._mgr.fetch_or_create(
             self.RESTORE_PIPELINE_TEMPLATE,
             pipeline_name=pipeline_name, tags=tags, pipeline_description=pipeline_description,
-            log_location=self._s3_url("logs"))
+            log_location=self._s3_url("logs"), metanetwork=metanetwork, force_update=force_update)
         param_values = self._get_table_params(table_name)
         param_values['myInputS3Loc'] = self._s3_url(env, table_name, backup_dir)
 
