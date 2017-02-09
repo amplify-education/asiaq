@@ -263,6 +263,10 @@ class DiscoAutoscale(object):
             termination_policies=termination_policies,
             instance_id=None)
         throttled_call(self.connection.create_auto_scaling_group, group)
+        throttled_call(self.boto3_autoscale.enable_metrics_collection,
+            AutoScalingGroupName=group_name,
+            Granularity='1Minute' 
+        )
         return group
 
     # pylint: disable=too-many-arguments
