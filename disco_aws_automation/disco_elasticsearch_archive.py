@@ -226,12 +226,7 @@ class DiscoESArchive(object):
         # We don't want to return today's index because it might not be complete yet.
         # We don't want to return yesterday's index because that ensures we don't run into
         # the time zone issue dealing with finding today's date.
-        yesterday = datetime.date.today() - datetime.timedelta(days=1)
-        yesterday_str = yesterday.strftime('%Y.%m.%d')
-
-        return [index['index']
-                for index in self._get_all_indices_stats()
-                if index['index'][-10:] < yesterday_str]
+        return [index['index'] for index in self._get_all_indices_stats()]
 
     def _all_index_names(self):
         """ Return list of all indices """
@@ -418,11 +413,11 @@ class DiscoESArchive(object):
         of shards
         """
         threshold = float(self.get_es_option("archive_threshold"))
-        if threshold > 1.0 or threshold <= .0:
+        if threshold > 1.0 or threshold < .0:
             raise RuntimeError("ElasticSearch archive threshold must be between 0 and 1.0.")
 
         max_shards = int(self.get_es_option("archive_max_shards"))
-        if max_shards <= 0:
+        if max_shards < 0:
             raise RuntimeError("ElasticSearch max shards must be greater than 0.")
 
         logger.info(
