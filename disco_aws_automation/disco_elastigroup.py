@@ -15,7 +15,7 @@ from .exceptions import TooManyAutoscalingGroups
 
 logger = logging.getLogger(__name__)
 
-SPOTINST_API = 'https://api.spotinst.io/aws/ec2/group/'
+SPOTINST_API = 'https://api.spotinst.io/aws/ec2/group'
 
 
 class DiscoElastigroup(object):
@@ -71,6 +71,12 @@ class DiscoElastigroup(object):
             self._boto3_ec = boto3.client('ec2')
         return self._boto3_ec
 
+    def _spotinst_call(self, uri='/', data=None, method='get'):
+        if method not in ['get', 'post', 'put', 'delete']:
+            raise Exception('Method {} is not supported'.format(method))
+        method_to_call = getattr(self.session, method)
+        return method_to_call(SPOTINST_API + uri, data=json.dumps(data) if data else None)
+
     def _get_new_groupname(self, hostclass):
         """Returns a new elastigroup name when given a hostclass"""
         return self.environment_name + '_' + hostclass + "_" + str(int(time.time()))
@@ -92,7 +98,7 @@ class DiscoElastigroup(object):
         elastigroup can be found, returns an empty list.
         """
         try:
-            groups = self.session.get(SPOTINST_API).json()['response']['items']
+            groups = self._spotinst_call().json()['response']['items']
             groups = [group for group in groups if group['name'].startswith(self.environment_name)]
         except KeyError:
             return []
@@ -123,7 +129,7 @@ class DiscoElastigroup(object):
 
     def _get_group_instances(self, group_id):
         """Returns list of instance ids in a group"""
-        return self.session.get(SPOTINST_API + group_id + '/status').json()['response']['items']
+        return self._spotinst_call(uri='/' + group_id + '/status').json()['response']['items']
 
     def get_instances(self, hostclass=None, group_name=None):
         """Returns elastigroup instances for hostclass in the current environment"""
@@ -287,10 +293,10 @@ class DiscoElastigroup(object):
             # Remove fields not allowed in update
             del group_config['group']['capacity']['unit']
             del group_config['group']['compute']['product']
-            self.session.put(SPOTINST_API + group_id, data=json.dumps(group_config))
+            self._spotinst_call(uri='/' + group_id, data=group_config, method='put')
             return {'name': group['name']}
         else:
-            new_group = self.session.post(SPOTINST_API, data=json.dumps(group_config)).json()
+            new_group = self._spotinst_call(data=group_config, method='post').json()
             new_group_name = new_group['response']['items'][0]['name']
             return {'name': new_group_name}
 
@@ -298,7 +304,7 @@ class DiscoElastigroup(object):
         """Delete an elastigroup by group id"""
         # We need argument `force` to match method in autoscale
         # pylint: disable=unused-argument
-        self.session.delete(SPOTINST_API + group_id)
+        self._spotinst_call(uri='/' + group_id, method='delete')
 
     def delete_groups(self, hostclass=None, group_name=None, force=False):
         """Delete all elastigroups based on hostclass"""
@@ -329,7 +335,7 @@ class DiscoElastigroup(object):
                 }
             }
             logger.info("Scaling down group %s", group['name'])
-            self.session.put(SPOTINST_API + group['id'], data=json.dumps(group_update))
+            self._spotinst_call(uri='/' + group['id'], data=group_update, method='put')
 
             if wait:
                 waiter = throttled_call(self.boto3_ec.get_waiter, 'instance_terminated')
@@ -353,19 +359,3 @@ class DiscoElastigroup(object):
             instance_ids = [instance['instanceId'] for instance in self._get_group_instances(group_id)]
             if instance_id in instance_ids:
                 return group_id
-
-    def terminate(self, instance_id, decrement_capacity=True):
-        """
-        Terminate instances using the spotinst API.
-
-        Detaching instances from elastigroup will delete them.
-
-        When decrement_capacity is True this allows us to avoid
-        autoscaling immediately replacing a terminated instance.
-        """
-        data = {"instancesToDetach": [instance_id],
-                "shouldTerminateInstances": True,
-                "shouldDecrementTargetCapacity": decrement_capacity,
-                "drainingTimeout": 1}
-        group_id = self._get_group_id_from_instance_id(instance_id)
-        self.session.put(SPOTINST_API + group_id + '/detachInstances', data=json.dumps(data))
