@@ -2,7 +2,6 @@
 Tests of disco_elastigroup
 """
 import random
-import json
 
 from unittest import TestCase
 
@@ -129,10 +128,11 @@ class DiscoElastigroupTests(TestCase):
         """Verifies new elastigroup is created"""
         self.elastigroup._create_az_subnets_dict = MagicMock()
         self.elastigroup._create_elastigroup_config = MagicMock(return_value=dict())
+        self.elastigroup._spotinst_call = MagicMock()
 
         self.elastigroup.update_group(hostclass="mhcfoo")
 
-        self.elastigroup.session.post.assert_called_once_with(SPOTINST_API, data=json.dumps({}))
+        self.elastigroup._spotinst_call.assert_called_with(data={}, method='post')
 
     def test_update_existing_group(self):
         """Verifies existing elastigroup is updated"""
@@ -150,8 +150,9 @@ class DiscoElastigroupTests(TestCase):
         self.elastigroup._create_az_subnets_dict = MagicMock()
         self.elastigroup._create_elastigroup_config = MagicMock(return_value=mock_group_config)
         self.elastigroup.get_existing_group = MagicMock(return_value=mock_group)
+        self.elastigroup._spotinst_call = MagicMock()
 
         self.elastigroup.update_group(hostclass="mhcfoo")
 
-        self.elastigroup.session.put.assert_called_once_with(SPOTINST_API + mock_group['id'],
-                                                             data=json.dumps(mock_group_config))
+        self.elastigroup._spotinst_call.assert_called_once_with(uri='/' + mock_group['id'],
+                                                                data=mock_group_config, method='put')
