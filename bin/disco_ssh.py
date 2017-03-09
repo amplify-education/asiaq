@@ -14,6 +14,7 @@ Options:
      --debug                Log in debug level
      --env ENV              Environment to operate in
      --first                In case of multiple matching instances, connect to the first instead of failing
+     --tunnel LPORT:RPORT   Establish a secure connection between a local port and a remote port on the host
 """
 
 import logging
@@ -44,6 +45,7 @@ class DiscoSSH(object):
         self.env = self.args["--env"] or self.config.get("disco_aws", "default_environment")
         self.pick_instance = self.args['--first']
         configure_logging(args["--debug"])
+        self.tunnel = self.args["--tunnel"]
 
     def is_ip(self, string):
         """Returns True if the given string is an IPv4 address"""
@@ -134,16 +136,31 @@ class DiscoSSH(object):
         """
         Given a list of ip addresses, build an ssh command to tunnel through n-1 ips to reach the n-th ip
         """
-        command = " ".join([
-            "ssh -At {} {}".format(SSH_OPTIONS, ip)
-            for ip in ips])
+        if self.tunnel:
+            lport, rport = self.tunnel.split(":")
+            host = self.args["<host>"]
+
+            command = "ssh -At {} -fNL {}:{}:{} {}".format(SSH_OPTIONS, lport, host, rport, ips[0])
+
+        else:
+            command = " ".join([
+                "ssh -At {} {}".format(SSH_OPTIONS, ip)
+                for ip in ips])
         return command
 
     def run(self):
         """Parses command line and dispatches the commands"""
         host = self.args["<host>"]
 
-        ips = self.detect_best_route(host)
+        if self.tunnel:
+            jump_host_ip = self.aws().find_jump_address()
+            if not jump_host_ip:
+                raise EasyExit("No jump host in {}".format(self.env))
+            ips = [jump_host_ip]
+
+        else:
+            ips = self.detect_best_route(host)
+
         cmd = self.build_ssh_cmd(ips)
         logger.info("Now ssh-ing: %s", cmd)
         os.system(cmd)
