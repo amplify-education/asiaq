@@ -51,7 +51,7 @@ class DiscoAlarm(object):
         """
         Create an alarm, delete and re-create if it already exists
         """
-        existing_alarms = self.cloudwatch.describe_alarms(alarm_names=[alarm.name])
+        existing_alarms = throttled_call(self.cloudwatch.describe_alarms, alarm_names=[alarm.name])
         for existing_alarm in existing_alarms:
             throttled_call(
                 existing_alarm.delete

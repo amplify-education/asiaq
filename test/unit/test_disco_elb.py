@@ -1,8 +1,9 @@
 """Tests of disco_elb"""
 from unittest import TestCase
-from mock import MagicMock
+from mock import MagicMock, ANY
 from moto import mock_elb
-from disco_aws_automation import DiscoELB, CommandError
+from disco_aws_automation import DiscoELB
+from disco_aws_automation.disco_elb import DiscoELBPortConfig, DiscoELBPortMapping
 
 TEST_ENV_NAME = 'unittestenv'
 TEST_HOSTCLASS = 'mhcunit'
@@ -25,6 +26,9 @@ MOCK_ELB_STICKY_POLICY = {
     u'PolicyTypeName': 'LBCookieStickinessPolicyType'
 }
 
+# This is not a constant I am 100% comfortable with, but it appears to be reproducible so far
+MOCK_ELB_ADDRESS = 'd0aff1d22a42200a1c35825e61137bb4.us-east-1.elb.amazonaws.com'
+
 
 def _get_vpc_mock():
     vpc_mock = MagicMock()
@@ -45,28 +49,50 @@ class DiscoELBTests(TestCase):
         self.iam.get_certificate_arn.return_value = TEST_CERTIFICATE_ARN_IAM
 
     # pylint: disable=too-many-arguments, R0914
-    def _create_elb(self, hostclass=TEST_HOSTCLASS, public=False, tls=False,
-                    instance_protocol='HTTP', instance_port=80,
-                    elb_protocols='HTTP', elb_ports='80',
-                    idle_timeout=None, connection_draining_timeout=None,
-                    sticky_app_cookie=None, existing_cookie_policy=None, testing=False,
-                    cross_zone_load_balancing=True, cert_name=None):
+    def _create_elb(
+            self,
+            hostclass=TEST_HOSTCLASS,
+            public=False,
+            tls=False,
+            instance_protocols=('HTTP',),
+            instance_ports=(80,),
+            elb_protocols=('HTTP',),
+            elb_ports=(80,),
+            idle_timeout=None,
+            connection_draining_timeout=None,
+            sticky_app_cookie=None,
+            elb_dns_alias=None,
+            existing_cookie_policy=None,
+            testing=False,
+            cross_zone_load_balancing=True,
+            cert_name=None,
+            health_check_url='/'
+    ):
         sticky_policies = [existing_cookie_policy] if existing_cookie_policy else []
         mock_describe = MagicMock(return_value={'PolicyDescriptions': sticky_policies})
         self.disco_elb.elb_client.describe_load_balancer_policies = mock_describe
+
+        elb_protocols = ['HTTPS'] if tls else elb_protocols
+        elb_ports = [443] if tls else elb_ports
 
         return self.disco_elb.get_or_create_elb(
             hostclass=hostclass or TEST_HOSTCLASS,
             security_groups=['sec-1'],
             subnets=[],
             hosted_zone_name=TEST_DOMAIN_NAME,
-            health_check_url="/" if instance_protocol.upper() in ('HTTP', 'HTTPS') else "",
-            instance_protocol=instance_protocol,
-            instance_port=instance_port,
-            elb_protocols="HTTPS" if tls else elb_protocols,
-            elb_ports='443' if tls else elb_ports,
+            health_check_url=health_check_url,
+            port_config=DiscoELBPortConfig(
+                [
+                    DiscoELBPortMapping(internal_port, internal_protocol, external_port, external_protocol)
+                    for (internal_port, internal_protocol), (external_port, external_protocol) in zip(
+                        zip(instance_ports, instance_protocols),
+                        zip(elb_ports, elb_protocols)
+                    )
+                ]
+            ),
             elb_public=public,
             sticky_app_cookie=sticky_app_cookie,
+            elb_dns_alias=elb_dns_alias,
             idle_timeout=idle_timeout,
             connection_draining_timeout=connection_draining_timeout,
             cert_name=cert_name,
@@ -248,8 +274,8 @@ class DiscoELBTests(TestCase):
         """Test creation an ELB with TCP"""
         elb_client = self.disco_elb.elb_client
         elb_client.create_load_balancer = MagicMock(wraps=elb_client.create_load_balancer)
-        self._create_elb(instance_protocol='TCP', instance_port=25,
-                         elb_protocols='TCP', elb_ports=25)
+        self._create_elb(instance_protocols=['TCP'], instance_ports=[25],
+                         elb_protocols=['TCP'], elb_ports=[25])
         elb_client.create_load_balancer.assert_called_once_with(
             LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
             Listeners=[{
@@ -267,8 +293,8 @@ class DiscoELBTests(TestCase):
         """Test creating an ELB that listens on multiple ports"""
         elb_client = self.disco_elb.elb_client
         elb_client.create_load_balancer = MagicMock(wraps=elb_client.create_load_balancer)
-        self._create_elb(instance_protocol='HTTP', instance_port=80,
-                         elb_protocols='HTTP, HTTPS', elb_ports='80, 443')
+        self._create_elb(instance_protocols=['HTTP', 'HTTP'], instance_ports=[80, 80],
+                         elb_protocols=['HTTP', 'HTTPS'], elb_ports=[80, 443])
         elb_client.create_load_balancer.assert_called_once_with(
             LoadBalancerName=DiscoELB.get_elb_id('unittestenv', 'mhcunit'),
             Listeners=[{
@@ -288,12 +314,122 @@ class DiscoELBTests(TestCase):
             Scheme='internal')
 
     @mock_elb
-    def test_get_elb_mismatched_ports_protocols(self):
-        """Test that creating an ELB fails when using a different number of ELB ports and protocols"""
-        self.assertRaises(CommandError,
-                          self._create_elb,
-                          elb_protocols='HTTP, HTTPS',
-                          elb_ports='80')
+    def test_get_elb_http_health_check(self):
+        """
+        Creating an ELB creates a health check for the first HTTP or HTTPS instance listener
+        """
+        # HTTP first
+        elb_client = self.disco_elb.elb_client
+        elb_client.configure_health_check = MagicMock(wraps=elb_client.configure_health_check)
+        self._create_elb(
+            instance_protocols=['HTTP', 'HTTP'],
+            instance_ports=[80, 80],
+            elb_protocols=['HTTP', 'HTTPS'],
+            elb_ports=[80, 443],
+            health_check_url='/health/check/endpoint/'
+        )
+
+        elb_client.configure_health_check.assert_called_once_with(
+            LoadBalancerName=ANY,
+            HealthCheck={
+                'Target': 'HTTP:80/health/check/endpoint/',
+                'Interval': 5,
+                'Timeout': 4,
+                'UnhealthyThreshold': 2,
+                'HealthyThreshold': 2
+            }
+        )
+
+        # HTTPS first
+        elb_client = self.disco_elb.elb_client
+        elb_client.configure_health_check = MagicMock(wraps=elb_client.configure_health_check)
+        self._create_elb(
+            instance_protocols=['HTTPS', 'HTTP'],
+            instance_ports=[443, 80],
+            elb_protocols=['HTTP', 'HTTPS'],
+            elb_ports=[80, 443],
+            health_check_url='/health/check/endpoint/'
+        )
+
+        elb_client.configure_health_check.assert_called_once_with(
+            LoadBalancerName=ANY,
+            HealthCheck={
+                'Target': 'HTTPS:443/health/check/endpoint/',
+                'Interval': 5,
+                'Timeout': 4,
+                'UnhealthyThreshold': 2,
+                'HealthyThreshold': 2
+            }
+        )
+
+        # HTTP after TCP
+        elb_client.configure_health_check = MagicMock(wraps=elb_client.configure_health_check)
+        self._create_elb(
+            instance_protocols=['TCP', 'HTTP'],
+            instance_ports=[9001, 4271],
+            elb_protocols=['TCP', 'HTTPS'],
+            elb_ports=[9001, 443],
+            health_check_url='/health/check/endpoint/'
+        )
+
+        elb_client.configure_health_check.assert_called_once_with(
+            LoadBalancerName=ANY,
+            HealthCheck={
+                'Target': 'HTTP:4271/health/check/endpoint/',
+                'Interval': 5,
+                'Timeout': 4,
+                'UnhealthyThreshold': 2,
+                'HealthyThreshold': 2
+            }
+        )
+
+        # HTTPS after TCP
+        elb_client.configure_health_check = MagicMock(wraps=elb_client.configure_health_check)
+        self._create_elb(
+            instance_protocols=['TCP', 'HTTPS'],
+            instance_ports=[9001, 4271],
+            elb_protocols=['TCP', 'HTTPS'],
+            elb_ports=[9001, 443],
+            health_check_url='/health/check/endpoint/'
+        )
+
+        elb_client.configure_health_check.assert_called_once_with(
+            LoadBalancerName=ANY,
+            HealthCheck={
+                'Target': 'HTTPS:4271/health/check/endpoint/',
+                'Interval': 5,
+                'Timeout': 4,
+                'UnhealthyThreshold': 2,
+                'HealthyThreshold': 2
+            }
+        )
+
+    @mock_elb
+    def test_get_elb_tcp_health_check(self):
+        """
+        If there are no HTTP(S) instance listeners, create_elb creates a health check for the first listener
+        """
+        # HTTP first
+        elb_client = self.disco_elb.elb_client
+        elb_client.configure_health_check = MagicMock(wraps=elb_client.configure_health_check)
+        self._create_elb(
+            instance_protocols=['TCP', 'TCP'],
+            instance_ports=[9001, 9002],
+            elb_protocols=['TCP', 'TCP'],
+            elb_ports=[9001, 9002],
+            health_check_url='/health/check/endpoint/'
+        )
+
+        elb_client.configure_health_check.assert_called_once_with(
+            LoadBalancerName=ANY,
+            HealthCheck={
+                'Target': 'TCP:9001',
+                'Interval': 5,
+                'Timeout': 4,
+                'UnhealthyThreshold': 2,
+                'HealthyThreshold': 2
+            }
+        )
 
     @mock_elb
     def test_get_elb_with_idle_timeout(self):
@@ -416,3 +552,22 @@ class DiscoELBTests(TestCase):
         elb_names = [listing['elb_name'] for listing in listings]
 
         self.assertEquals(set(['unittestenv-mhcbar', 'unittestenv-mhcfoo-test']), set(elb_names))
+
+    @mock_elb
+    def test_default_dns_alias(self):
+        """Test that the default DNS alias is set up"""
+        self._create_elb(hostclass='mhcfunky')
+        self.route53.create_record.assert_called_once_with(
+            TEST_DOMAIN_NAME,
+            'mhcfunky-' + TEST_ENV_NAME + '.' + TEST_DOMAIN_NAME, 'CNAME', MOCK_ELB_ADDRESS)
+
+    @mock_elb
+    def test_custom_dns_alias(self):
+        """Test that the custom DNS alias is set up"""
+        self._create_elb(hostclass='mhcfunky', elb_dns_alias='thefunk')
+        self.route53.create_record.assert_any_call(
+            TEST_DOMAIN_NAME,
+            'thefunk' + '.' + TEST_DOMAIN_NAME, 'CNAME', MOCK_ELB_ADDRESS)
+        self.route53.create_record.assert_any_call(
+            TEST_DOMAIN_NAME,
+            'mhcfunky-' + TEST_ENV_NAME + '.' + TEST_DOMAIN_NAME, 'CNAME', MOCK_ELB_ADDRESS)

@@ -10,6 +10,7 @@ import sys
 from collections import defaultdict
 
 from disco_aws_automation import DiscoAutoscale
+from disco_aws_automation import DiscoElastigroup
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
@@ -155,27 +156,27 @@ def run():
     environment_name = args.env or config.get("disco_aws", "default_environment")
 
     autoscale = DiscoAutoscale(environment_name)
+    elastigroup = DiscoElastigroup(environment_name)
 
     # Autoscaling group commands
     if args.mode == "listgroups":
-        format_str = "{0} {1:12} {2:3} {3:3} {4:3} {5:3}"
-        groups = autoscale.get_existing_groups()
-        instances = autoscale.get_instances()
+        format_str = "{0} {1:12} {2:3} {3:3} {4:3} {5:3} {6:4}"
+        groups = autoscale.list_groups() + elastigroup.list_groups()
+        groups.sort(key=lambda grp: grp['name'])
         if args.debug:
             print(format_str.format(
-                "Name".ljust(35 + len(environment_name)), "AMI", "min", "des", "max", "cnt"))
+                "Name".ljust(35 + len(environment_name)), "AMI", "min", "des", "max", "cnt", "type"))
         for group in groups:
-            launch_cfg = list(autoscale.get_configs(names=[group.launch_config_name]))
-            image_id = launch_cfg[0].image_id if len(launch_cfg) else ""
-            group_str = group.name.ljust(35 + len(environment_name))
-            group_cnt = len([instance for instance in instances if instance.group_name == group.name])
-            print(format_str.format(group_str, image_id,
-                                    group.min_size, group.desired_capacity, group.max_size,
-                                    group_cnt))
+            print (format_str.format(group['name'].ljust(35 + len(environment_name)),
+                                     group['image_id'], group['min_size'], group['desired_capacity'],
+                                     group['max_size'], group['group_cnt'], group['type']))
+
     elif args.mode == "cleangroups":
-        autoscale.clean_groups()
+        autoscale.delete_groups()
+        elastigroup.delete_groups()
     elif args.mode == "deletegroup":
         autoscale.delete_groups(hostclass=args.hostclass, group_name=args.name, force=args.force)
+        elastigroup.delete_groups(hostclass=args.hostclass, group_name=args.name, force=args.force)
 
     # Launch Configuration commands
     elif args.mode == "listconfigs":

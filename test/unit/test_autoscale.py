@@ -343,20 +343,20 @@ class DiscoAutoscaleTests(TestCase):
         """Calling update_snapshot when already running latest snapshot does nothing"""
         self._autoscale.get_launch_config = MagicMock(
             return_value=self.mock_launchconfig(self._autoscale.environment_name, "mhcfoo"))
-        self._autoscale.update_group = MagicMock()
+        self._autoscale.modify_group = MagicMock()
         self._autoscale.update_snapshot("snap-12345678", 99, hostclass="mhcfoo")
-        self.assertEqual(self._autoscale.update_group.call_count, 0)
+        self.assertEqual(self._autoscale.modify_group.call_count, 0)
 
     def test_update_snapshot_with_update(self):
-        """Calling update_snapshot when not running latest snapshot calls update_group with new config"""
+        """Calling update_snapshot when not running latest snapshot calls modify_group with new config"""
         mock_lc = self.mock_launchconfig(self._autoscale.environment_name, "mhcfoo", 1)
         self._autoscale.get_launch_config = MagicMock(return_value=mock_lc)
-        self._autoscale.update_group = MagicMock()
+        self._autoscale.modify_group = MagicMock()
         self._autoscale.get_existing_group = MagicMock(return_value="group")
         self._autoscale.update_snapshot("snap-NEW", 99, hostclass="mhcfoo")
-        self.assertNotEqual(self._autoscale.update_group.mock_calls, [call("group", mock_lc.name)])
+        self.assertNotEqual(self._autoscale.modify_group.mock_calls, [call("group", mock_lc.name)])
         self.assertEqual(mock_lc.block_device_mappings["/dev/snap"].snapshot_id, "snap-NEW")
-        self.assertEqual(self._autoscale.update_group.call_count, 1)
+        self.assertEqual(self._autoscale.modify_group.call_count, 1)
 
     def test_update_elb_with_new_lb(self):
         '''update_elb will add new lb and remove old when there is no overlap in sets'''

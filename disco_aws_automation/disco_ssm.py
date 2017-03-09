@@ -13,7 +13,6 @@ from botocore.exceptions import ClientError
 from .disco_config import read_config
 from .resource_helper import throttled_call, wait_for_state_boto3
 from .exceptions import TimeoutError
-from .disco_creds import DiscoS3Bucket
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +39,7 @@ class DiscoSSM(object):
             self.environment_name = self.config_aws.environment
 
         self._conn = None  # Lazily initialized
+        self._s3 = None  # Lazily initialized
 
     @property
     def conn(self):
@@ -48,13 +48,18 @@ class DiscoSSM(object):
             self._conn = boto3.client('ssm')
         return self._conn
 
+    # Pylint thinks 's3' isn't long enough, but it's actually a good descriptor for s3 conn...
+    # pylint: disable=invalid-name
+    @property
+    def s3(self):
+        """The boto3 s3 connection object"""
+        if not self._s3:
+            self._s3 = boto3.client('s3')
+        return self._s3
+
     def get_s3_bucket_name(self):
         """Convenience method for returning the configured s3 bucket for SSM"""
         return self.config_aws.get_asiaq_option("ssm_s3_bucket", required=False)
-
-    def get_s3_bucket(self, bucket_name=None):
-        """A bit of a convenience function for getting an S3 bucket"""
-        return DiscoS3Bucket(bucket_name or self.get_s3_bucket_name())
 
     def execute(self, instance_ids, document_name, parameters=None, comment=None, desired_status='Success'):
         """
@@ -77,7 +82,15 @@ class DiscoSSM(object):
             arguments["Comment"] = comment
 
         if bucket_name is not None:
-            arguments["OutputS3BucketName"] = bucket_name
+            try:
+                # Head bucket checks if a bucket exists and throws an exception if it doesn't
+                self.s3.head_bucket(Bucket=bucket_name)
+                arguments["OutputS3BucketName"] = bucket_name
+            except ClientError:
+                logger.error(
+                    "Unable to access S3 bucket '%s', output limited to 2500 characters",
+                    bucket_name
+                )
 
         logger.info(
             "Executing document '%s' against instances %s",
@@ -192,7 +205,7 @@ class DiscoSSM(object):
             instance_output = []
 
             for command_plugin in command_invocation['CommandPlugins']:
-                if 'OutputS3BucketName' in command_plugin.keys():
+                if command_plugin.get('OutputS3BucketName'):
                     plugin_output = self._get_output_from_s3(command_plugin)
                 else:
                     plugin_output = self._get_output_from_ssm(command_plugin)
@@ -226,20 +239,30 @@ class DiscoSSM(object):
         """Helper method for extracting command output from S3"""
         bucket_name = command_plugin['OutputS3BucketName']
         key = command_plugin['OutputS3KeyPrefix']
-        bucket = self.get_s3_bucket(bucket_name)
 
-        keys_from_command = bucket.listkeys(prefix_keys=key)
+        response = self.s3.list_objects_v2(
+            Bucket=bucket_name,
+            Prefix=key
+        )
+
+        keys_from_command = [entry['Key'] for entry in response['Contents']]
 
         stdout_keys = [key for key in keys_from_command if key.endswith('stdout')]
         stderr_keys = [key for key in keys_from_command if key.endswith('stderr')]
 
         if stdout_keys:
-            stdout = bucket.get_key(stdout_keys[0]).decode('utf-8').strip()
+            stdout = self.s3.get_object(
+                Bucket=bucket_name,
+                Key=stdout_keys[0]
+            )['Body'].read().decode('utf-8').strip()
         else:
             stdout = u'-'
 
         if stderr_keys:
-            stderr = bucket.get_key(stderr_keys[0]).decode('utf-8').strip()
+            stderr = self.s3.get_object(
+                Bucket=bucket_name,
+                Key=stderr_keys[0]
+            )['Body'].read().decode('utf-8').strip()
         else:
             stderr = u'-'
 

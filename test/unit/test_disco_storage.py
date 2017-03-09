@@ -128,9 +128,8 @@ class DiscoStorageTests(TestCase):
         self.assertEquals(False, snapshots[0].encrypted)
         self.assertEquals('mock_productline', snapshots[0].tags['productline'])
 
-    @mock_ec2
-    def test_take_snapshot(self):
-        """Test taking a snapshot of an attached volume"""
+    def _create_volume(self):
+        """Create the volume for the take_snapshot unit tests"""
         client = boto3.client('ec2')
         ec2 = boto3.resource('ec2')
         instance = ec2.create_instances(ImageId='mock_image_id',
@@ -153,13 +152,35 @@ class DiscoStorageTests(TestCase):
             InstanceId=instance.instance_id,
             Device='/dev/sdb'
         )
+        return volume['VolumeId']
 
-        snapshot_id = self.storage.take_snapshot(volume_id=volume['VolumeId'])
-
+    def _validate_snapshot_fields(self, snapshot_id, tags):
+        """Validate the take_snapshot unit tests"""
         snapshots = self.storage.get_snapshots('mhcmock')
         self.assertEquals(len(snapshots), 1)
         self.assertEquals(snapshots[0].id, snapshot_id)
         self.assertEquals(snapshots[0].volume_size, 100)
-        self.assertEquals(snapshots[0].tags, {'env': 'unittestenv',
-                                              'hostclass': 'mhcmock',
-                                              'productline': 'mock_productline'})
+        self.assertEquals(snapshots[0].tags, tags)
+
+    @mock_ec2
+    def test_take_snapshot(self):
+        """Test taking a snapshot of an attached volume"""
+        volume_id = self._create_volume()
+
+        snapshot_id = self.storage.take_snapshot(volume_id=volume_id)
+
+        self._validate_snapshot_fields(snapshot_id,
+                                       {'env': 'unittestenv', 'hostclass': 'mhcmock',
+                                        'productline': 'mock_productline'})
+
+    @mock_ec2
+    def test_take_snapshot_with_disk_usage(self):
+        """Test taking a snapshot of an attached volume and adding the disk_usage as tag"""
+        volume_id = self._create_volume()
+
+        snapshot_id = self.storage.take_snapshot(volume_id=volume_id, snapshot_tags={'disk_usage': '25Gi',
+                                                                                     'new_tag': 'value'})
+
+        self._validate_snapshot_fields(snapshot_id, {'env': 'unittestenv', 'hostclass': 'mhcmock',
+                                                     'productline': 'mock_productline',
+                                                     'disk_usage': '25Gi', 'new_tag': 'value'})

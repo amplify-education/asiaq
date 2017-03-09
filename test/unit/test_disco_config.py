@@ -148,6 +148,12 @@ class TestAsiaqConfig(TestCase):
         self.assertEquals('ci_answer',
                           config.get_asiaq_option('envy_option', section='mhcfoobar', environment='ci'))
 
+    def test__get_asiaq_option__env_in_constructor_and_call(self):
+        "Env-specific option with environment passed in at call time"
+        config = MockAsiaqConfig(deepcopy(self.BASE_CONFIG_DICT), environment="bad_env")
+        self.assertEquals('ci_answer',
+                          config.get_asiaq_option('envy_option', section='mhcfoobar', environment='ci'))
+
     def test__get_asiaq_option__bad_env_in_call(self):
         "Env-specific option with unused environment passed in at call time"
         config = MockAsiaqConfig(deepcopy(self.BASE_CONFIG_DICT))

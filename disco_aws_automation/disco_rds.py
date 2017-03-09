@@ -583,11 +583,14 @@ class DiscoRDS(object):
         """ Delete an RDS instance/cluster. Final snapshot is automatically taken. """
         logger.info("Deleting RDS cluster %s", instance_identifier)
 
+        db_instance = throttled_call(
+            self.client.describe_db_instances,
+            DBInstanceIdentifier=instance_identifier
+        )["DBInstances"][0]
+        db_subnet_group_name = db_instance["DBSubnetGroup"]["DBSubnetGroupName"]
+
         if skip_final_snapshot:
-            allocated_storage = throttled_call(
-                self.client.describe_db_instances,
-                DBInstanceIdentifier=instance_identifier
-            )["DBInstances"][0]["AllocatedStorage"]
+            allocated_storage = db_instance["AllocatedStorage"]
 
             ansi_color_red = "\033[91m"
             ansi_color_none = "\033[0m"
@@ -595,6 +598,12 @@ class DiscoRDS(object):
                   " will be dropped and no backup taken. Data will be irrecoverable." + ansi_color_none)
             response = raw_input("Confirm by typing the amount of allocated storage that will be dropped: ")
             if response == str(allocated_storage):
+                try:
+                    throttled_call(self.client.delete_db_subnet_group, DBSubnetGroupName=db_subnet_group_name)
+                except Exception as err:
+                    logger.exception("Unable to delete subnet group '%s': %s", db_subnet_group_name,
+                                     repr(err))
+
                 throttled_call(
                     self.client.delete_db_instance,
                     DBInstanceIdentifier=instance_identifier,
@@ -609,6 +618,7 @@ class DiscoRDS(object):
             final_snapshot = "%s-final-snapshot" % instance_identifier
             try:
                 throttled_call(self.client.delete_db_snapshot, DBSnapshotIdentifier=final_snapshot)
+                throttled_call(self.client.delete_db_subnet_group, DBSubnetGroupName=db_subnet_group_name)
             except botocore.exceptions.ClientError:
                 pass
             keep_trying(

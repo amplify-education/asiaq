@@ -39,3 +39,4 @@ reports
 # Pycharm
 .idea/*
 .ropeproject/
+*.iml

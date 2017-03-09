@@ -2,6 +2,7 @@
 
 from .disco_acm import DiscoACM
 from .disco_autoscale import DiscoAutoscale
+from .disco_elastigroup import DiscoElastigroup
 from .disco_aws import DiscoAWS
 from .disco_bake import DiscoBake
 from .disco_creds import DiscoS3Bucket

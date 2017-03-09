@@ -18,3 +18,11 @@ class DiscoResourceHelperTests(TestCase):
     def test_check_written_s3_1(self):
         """Check raise exception when length does match"""
         resource_helper.check_written_s3("test", 1024, 1024)
+
+    def test_key_values_to_tags(self):
+        """Test the conversion of key:value to tag dict"""
+        mykeyvalues = ["productline:astronauts", "mytag:tag:value"]
+        expected_tag_dict = [{'Value': 'astronauts', 'Key': 'productline'},
+                             {'Value': 'tag:value', 'Key': 'mytag'}]
+        returned_tags = resource_helper.key_values_to_tags(mykeyvalues)
+        self.assertEqual(returned_tags, expected_tag_dict)

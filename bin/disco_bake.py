@@ -92,6 +92,8 @@ def get_parser():
                                     help='Restrict to this productline', default=None)
     parser_cleanupamis.add_argument('--dryrun', dest='dryrun', action='store_const', const=True,
                                     default=False, help='Print out amis to be deleted without deleting them')
+    parser_cleanupamis.add_argument('--exclude-amis', dest='exclude_amis', type=str, default='',
+                                    help="A comma seperated list of AMIs to not delete")
 
     parser_bake = subparsers.add_parser('bake', help="Create an ami",
                                         description="Phase1 AMI is created if hostclass is omited. "
@@ -179,7 +181,16 @@ def run():
         bakery.delete_ami(args.ami)
     elif args.mode == "cleanupamis":
         bakery = DiscoBake()
-        bakery.cleanup_amis(args.hostclass, args.product_line, args.stage, args.days, args.count, args.dryrun)
+        exclude_amis = args.exclude_amis.split(',')
+        bakery.cleanup_amis(
+            args.hostclass,
+            args.product_line,
+            args.stage,
+            args.days,
+            args.count,
+            args.dryrun,
+            exclude_amis
+        )
 
 if __name__ == "__main__":
     run_gracefully(run)

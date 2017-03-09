@@ -66,6 +66,8 @@ def get_parser():
     parser_provision.add_argument('--no-chaos', dest='no_chaos', action='store_const',
                                   const=True, default=None,
                                   help='Temporarily disable chaos')
+    parser_provision.add_argument('--spotinst', required=False, action='store_true',
+                                  help='Use spotinst for autoscaling group')
 
     parser_listhosts = subparsers.add_parser('listhosts', help='List all hosts')
     parser_listhosts.set_defaults(mode="listhosts")
@@ -287,7 +289,8 @@ def run():
             "min_size": args.min_size,
             "desired_size": args.desired_size,
             "max_size": args.max_size,
-            "chaos": "no" if args.no_chaos else None
+            "chaos": "no" if args.no_chaos else None,
+            "spotinst": args.spotinst
         }]
         aws.spinup(hostclass_dicts, testing=args.testing)
     elif args.mode == "listhosts":

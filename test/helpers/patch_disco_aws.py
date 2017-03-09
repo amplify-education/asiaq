@@ -55,7 +55,8 @@ def get_default_config_dict():
                           "zookeeper_hostclass": "mhczookeeper",
                           "logger_hostclass": "mhclogger",
                           "logforwarder_hostclass": "mhclogforwarder",
-                          "default_smoketest_termination": "True"},
+                          "default_smoketest_termination": "True",
+                          "default_environment": "auto-vpc-type"},
             "mhczookeeper": {"ip_address": "10.0.0.1"}}
 
 

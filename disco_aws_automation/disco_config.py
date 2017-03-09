@@ -129,3 +129,8 @@ class AsiaqConfig(ConfigParser):
         if bucket_suffix:
             bucket_parts.append(bucket_suffix)
         return separator.join(bucket_parts)
+
+    def get_hostclasses_from_section_names(self):
+        """Returns list of section names that represent hostclasses"""
+        return [section for section in self.sections()
+                if section.startswith("mhc")]

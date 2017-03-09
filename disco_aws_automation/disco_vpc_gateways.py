@@ -306,4 +306,11 @@ class DiscoVPCGateways(object):
         if eips:
             logger.info("Releasing temporary NAT EIPs: %s.", " ".join(eips))
         for eip in eips:
-            self.eip.release(eip)
+            try:
+                self.eip.release(eip)
+            except EC2ResponseError as exc:
+                if exc.error_code == "InvalidAddress.NotFound":
+                    # The EIP is likely released already
+                    logger.warn("IP address (%s) not found while trying to release EIP.", eip)
+                    continue
+                raise

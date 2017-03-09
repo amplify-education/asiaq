@@ -47,6 +47,7 @@ Options:
 
 from __future__ import print_function
 import csv
+import logging
 import sys
 
 from docopt import docopt
@@ -55,6 +56,9 @@ from disco_aws_automation import DiscoAWS, DiscoAutoscale, DiscoBake, DiscoDeplo
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
+
+
+logger = logging.getLogger(__name__)
 
 
 # R0912 Allow more than 12 branches so we can parse a lot of commands..
@@ -93,9 +97,17 @@ def run():
         allow_any_hostclass=args["--allow-any-hostclass"])
 
     if args["test"]:
-        deploy.test(dry_run=args["--dry-run"], deployment_strategy=args["--strategy"])
+        try:
+            deploy.test(dry_run=args["--dry-run"], deployment_strategy=args["--strategy"])
+        except RuntimeError as err:
+            logger.error(str(err))
+            sys.exit(1)
     elif args["update"]:
-        deploy.update(dry_run=args["--dry-run"], deployment_strategy=args["--strategy"])
+        try:
+            deploy.update(dry_run=args["--dry-run"], deployment_strategy=args["--strategy"])
+        except RuntimeError as err:
+            logger.error(str(err))
+            sys.exit(1)
     elif args["list"]:
         missing = "-" if len(pipeline_definition) else ""
         if args["--tested"]:

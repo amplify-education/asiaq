@@ -298,3 +298,105 @@ class DiscoRDSTests(unittest.TestCase):
         sg_group_id = self.rds.get_rds_security_group_id()
 
         self.assertEqual(MOCK_SG_GROUP_ID, sg_group_id)
+
+    def test_delete_db_instance_with_snapshot(self):
+        """Test delete db instance with snapshot"""
+        self.rds.client.describe_db_instances.return_value = {
+            'DBInstances': [{
+                'DBInstanceIdentifier': 'unittestenv-db-name',
+                'AllocatedStorage': '500GB',
+                'DBSubnetGroup': {
+                    'DBSubnetGroupName': 'group_name'
+                }
+            }]
+        }
+        with patch('__builtin__.raw_input', return_value='500GB'):
+            self.rds.delete_db_instance("unittestenv-db-name", True)
+            self.rds.client.delete_db_subnet_group.assert_called_with(DBSubnetGroupName="group_name")
+            self.rds.client.delete_db_instance.assert_called_with(DBInstanceIdentifier="unittestenv-db-name",
+                                                                  SkipFinalSnapshot=True)
+
+    def test_delete_db_instance_err_size(self):
+        """Test delete db instance with snapshot but incorrect size provided"""
+        self.rds.client.describe_db_instances.return_value = {
+            'DBInstances': [{
+                'DBInstanceIdentifier': 'unittestenv-db-name',
+                'AllocatedStorage': '500GB',
+                'DBSubnetGroup': {
+                    'DBSubnetGroupName': 'group_name'
+                }
+            }]
+        }
+        with patch('__builtin__.raw_input', return_value='100GB'):
+            self.assertRaises(SystemExit, self.rds.delete_db_instance, "unittestenv-db-name", True)
+            self.assertFalse(self.rds.client.delete_db_subnet_group.called)
+            self.assertFalse(self.rds.client.delete_db_instance.called)
+
+    def test_delete_db_instance_no_snapshot(self):
+        """Test delete db instance no snapshot"""
+        self.rds.client.describe_db_instances.return_value = {
+            'DBInstances': [{
+                'DBInstanceIdentifier': 'unittestenv-db-name',
+                'AllocatedStorage': '500GB',
+                'DBSubnetGroup': {
+                    'DBSubnetGroupName': 'group_name'
+                }
+            }]
+        }
+        self.rds.delete_db_instance("unittestenv-db-name", False)
+        self.rds.client.delete_db_snapshot.assert_called_with(
+            DBSnapshotIdentifier="unittestenv-db-name-final-snapshot")
+        self.rds.client.delete_db_subnet_group.assert_called_with(DBSubnetGroupName="group_name")
+        self.rds.client.delete_db_instance.assert_called_with(
+            DBInstanceIdentifier="unittestenv-db-name",
+            FinalDBSnapshotIdentifier="unittestenv-db-name-final-snapshot")
+
+    def test_delete_all_db_instances(self):
+        """Test delete all db instance"""
+        self.rds.get_db_instances = MagicMock()
+        self.rds._wait_for_db_instance_deletions = MagicMock()
+
+        self.rds.get_db_instances.return_value = [
+            {
+                'DBInstanceIdentifier': 'unittestenv-db-name1',
+                'DBInstanceStatus': 'available',
+                'DBSubnetGroup': {
+                    'DBSubnetGroupName': 'group_name'
+                }
+            },
+            {
+                'DBInstanceIdentifier': 'unittestenv-db-name2',
+                'DBInstanceStatus': 'available',
+                'DBSubnetGroup': {
+                    'DBSubnetGroupName': 'group_name'
+                }
+            }
+        ]
+
+        self.rds.delete_db_instance = MagicMock()
+        self.rds.delete_all_db_instances()
+        self.rds.delete_db_instance.assert_has_calls(self.rds.delete_db_instance('unittestenv-db-name1'),
+                                                     self.rds.delete_db_instance('unittestenv-db-name2'))
+
+    def test_delete_all_db_instances_err_status(self):
+        """Test delete all db instance invalid Status"""
+        self.rds.get_db_instances = MagicMock()
+        self.rds.get_db_instances.return_value = [
+            {
+                'DBInstanceIdentifier': 'unittestenv-db-name1',
+                'DBInstanceStatus': 'available',
+                'DBSubnetGroup': {
+                    'DBSubnetGroupName': 'group_name'
+                }
+            },
+            {
+                'DBInstanceIdentifier': 'unittestenv-db-name2',
+                'DBInstanceStatus': 'invalid',
+                'DBSubnetGroup': {
+                    'DBSubnetGroupName': 'group_name'
+                }
+            }
+        ]
+        self.rds.delete_db_instance = MagicMock()
+        self.assertRaises(RDSEnvironmentError, self.rds.delete_all_db_instances)
+        self.assertFalse(self.rds.delete_db_instance.called)

@@ -74,12 +74,22 @@ EPHEMERAL_DISK_COUNT = {
     "r3.2xlarge": 1,
     "r3.4xlarge": 1,
     "r3.8xlarge": 2,
+    "r4.large": 0,
+    "r4.xlarge": 0,
+    "r4.2xlarge": 0,
+    "r4.4xlarge": 0,
+    "r4.8xlarge": 0,
+    "r4.16xlarge": 0,
     "t1.micro": 0,
     "t2.nano": 0,
     "t2.micro": 0,
     "t2.small": 0,
     "t2.medium": 0,
     "t2.large": 0,
+    "t2.xlarge": 0,
+    "t2.2xlarge": 0,
+    "x1.16xlarge": 1,
+    "x1.32xlarge": 2
 }
 
 # see http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSOptimized.html
@@ -323,17 +333,21 @@ class DiscoStorage(object):
                 for snapshot in snapshots_to_delete:
                     self.delete_snapshot(snapshot.id)
 
-    def take_snapshot(self, volume_id):
+    def take_snapshot(self, volume_id, snapshot_tags=None):
         """Takes a snapshot of an attached volume"""
-        volume = self.connection.get_all_volumes(volume_ids=[volume_id])[0]
+        volume = throttled_call(self.connection.get_all_volumes, volume_ids=[volume_id])[0]
 
         if volume.attach_data and volume.attach_data.instance_id:
-            instance = self.connection.get_all_instances(
-                instance_ids=[volume.attach_data.instance_id])[0].instances[0]
+            instance = throttled_call(
+                self.connection.get_all_instances,
+                instance_ids=[volume.attach_data.instance_id]
+            )[0].instances[0]
 
             tags = {'hostclass': instance.tags['hostclass'],
                     'env': instance.tags['environment'],
                     'productline': instance.tags['productline']}
+            if snapshot_tags:
+                tags.update(snapshot_tags)
         else:
             raise RuntimeError("The volume specified is not attched to an instance. "
                                "Snapshotting that is not supported.")

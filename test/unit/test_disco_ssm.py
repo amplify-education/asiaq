@@ -3,14 +3,13 @@ import random
 import copy
 import json
 from unittest import TestCase
-from mock import MagicMock, patch, call, create_autospec
+from mock import MagicMock, patch, call
 
 from botocore.exceptions import ClientError
 
 from disco_aws_automation import DiscoSSM
 from disco_aws_automation import disco_ssm
 from disco_aws_automation.disco_ssm import SSM_DOCUMENTS_DIR, SSM_OUTPUT_ERROR_DELIMITER
-from disco_aws_automation.disco_creds import DiscoS3Bucket
 
 from test.helpers.patch_disco_aws import (get_mock_config,
                                           TEST_ENV_NAME)
@@ -58,15 +57,22 @@ MOCK_ASIAQ_DOCUMENT_FILE_CONTENTS = {
 MOCK_NEXT_TOKEN = "abcdefgABCDEFG"
 MOCK_COMMANDS = []
 MOCK_COMMAND_INVOCATIONS = []
-MOCK_S3_BUCKETS = {}
+MOCK_S3_STORE = {}
 
 
 # pylint: disable=invalid-name
 def mock_boto3_client(arg):
     """ mock method for boto3.client() """
-    if arg != "ssm":
+    if arg == "ssm":
+        return _get_mock_ssm()
+    elif arg == "s3":
+        return _get_mock_s3()
+    else:
         raise Exception("Mock %s client not implemented.", arg)
 
+
+def _get_mock_ssm():
+    """Get mock ssm client"""
     mock_asiaq_documents = copy.copy(MOCK_ASIAQ_DOCUMENTS)
     mock_asiaq_document_contents = copy.copy(MOCK_ASIAQ_DOCUMENT_CONTENTS)
     wait_flags = {'delete': True, 'create': True}
@@ -171,6 +177,40 @@ def mock_boto3_client(arg):
     return mock_ssm
 
 
+def _get_mock_s3():
+    """Get mock s3 client"""
+    def _mock_list_objects_v2(Bucket, Prefix):
+        data = MOCK_S3_STORE[Bucket]
+
+        response = {
+            'Contents': [{'Key': key} for key in data.keys() if key.startswith(Prefix)]
+        }
+
+        return response
+
+    def _mock_head_bucket(Bucket):
+        if Bucket != TEST_SSM_S3_BUCKET:
+            raise ClientError({'Error': {}}, 'HeadBucket')
+        return None
+
+    def _mock_get_object(Bucket, Key):
+        value = MOCK_S3_STORE[Bucket][Key]
+
+        body = MagicMock()
+        body.read.return_value = value
+
+        response = {'Body': body}
+
+        return response
+
+    mock_s3 = MagicMock()
+    mock_s3.list_objects_v2.side_effect = _mock_list_objects_v2
+    mock_s3.head_bucket.side_effect = _mock_head_bucket
+    mock_s3.get_object.side_effect = _mock_get_object
+
+    return mock_s3
+
+
 def _combine_stdout_and_stderr(stdout=None, stderr=None):
     if stdout is None and stderr is None:
         return ''
@@ -233,7 +273,7 @@ def _create_mock_command(instance_ids, document_name, comment=None, parameters=N
 
     if output_s3_bucket_name is not None:
         mock_s3_bucket = create_mock_s3_bucket(mock_invocations, stdout, stderr)
-        MOCK_S3_BUCKETS[command_id] = mock_s3_bucket
+        MOCK_S3_STORE[output_s3_bucket_name] = mock_s3_bucket
 
     return mock_command
 
@@ -242,31 +282,20 @@ def create_mock_s3_bucket(invocations, stdout, stderr):
     """
     Creates a mock Asiaq S3 Bucket object that contains the output of the given command invocations
     """
-    mock_s3_bucket = create_autospec(DiscoS3Bucket)
-
-    keys = []
-    key_to_data = {}
+    data = {}
 
     for invocation in invocations:
         prefix = invocation["CommandPlugins"][0]["OutputS3KeyPrefix"]
 
         if stdout is not None:
             stdout_key = "{0}/{1}".format(prefix, 'stdout')
-            key_to_data[stdout_key] = stdout
-            keys.append(stdout_key)
+            data[stdout_key] = stdout
 
         if stderr is not None:
             stderr_key = "{0}/{1}".format(prefix, 'stderr')
-            key_to_data[stderr_key] = stderr
-            keys.append(stderr_key)
+            data[stderr_key] = stderr
 
-    # Lambda seems like a decent solution here...
-    # pylint: disable=unnecessary-lambda
-    mock_s3_bucket.listkeys.side_effect = lambda prefix_keys: [key for key in keys
-                                                               if key.startswith(prefix_keys)]
-    mock_s3_bucket.get_key.side_effect = lambda key: key_to_data.get(key)
-
-    return mock_s3_bucket
+    return data
 
 
 def create_mock_open(content_dict):
@@ -470,11 +499,8 @@ class DiscoSSMTests(TestCase):
             document_name='foo-doc',
             output_s3_bucket_name='foo-bucket'
         )
+
         command_id = mock_command['CommandId']
-        mock_s3_bucket = MOCK_S3_BUCKETS[command_id]
-
-        self._ssm.get_s3_bucket = MagicMock(return_value=mock_s3_bucket)
-
         command_output = self._ssm.get_ssm_command_output(command_id)
 
         self.assertEquals(instance_ids, command_output.keys())
@@ -493,11 +519,8 @@ class DiscoSSMTests(TestCase):
             output_s3_bucket_name='foo-bucket',
             stdout=None
         )
+
         command_id = mock_command['CommandId']
-        mock_s3_bucket = MOCK_S3_BUCKETS[command_id]
-
-        self._ssm.get_s3_bucket = MagicMock(return_value=mock_s3_bucket)
-
         command_output = self._ssm.get_ssm_command_output(command_id)
 
         self.assertEquals(instance_ids, command_output.keys())
@@ -516,11 +539,8 @@ class DiscoSSMTests(TestCase):
             output_s3_bucket_name='foo-bucket',
             stderr=None
         )
+
         command_id = mock_command['CommandId']
-        mock_s3_bucket = MOCK_S3_BUCKETS[command_id]
-
-        self._ssm.get_s3_bucket = MagicMock(return_value=mock_s3_bucket)
-
         command_output = self._ssm.get_ssm_command_output(command_id)
 
         self.assertEquals(instance_ids, command_output.keys())
@@ -594,8 +614,6 @@ class DiscoSSMTests(TestCase):
         comment = "foo-comment"
         parameters = "foo-parameters"
 
-        self._ssm.get_s3_bucket = MagicMock(side_effect=lambda bucket_name: MOCK_S3_BUCKETS.values()[0])
-
         is_successful = self._ssm.execute(
             instance_ids,
             document_name,
@@ -604,7 +622,7 @@ class DiscoSSMTests(TestCase):
         )
 
         self.assertEquals(True, is_successful)
-        self.assertEquals(False, self._ssm.get_s3_bucket.called)
+        self.assertEquals(False, self._ssm.s3.get_object.called)
 
     @patch('boto3.client', mock_boto3_client)
     def test_execute_command_with_s3(self):
@@ -614,7 +632,24 @@ class DiscoSSMTests(TestCase):
         comment = "foo-comment"
         parameters = "foo-parameters"
 
-        self._ssm.get_s3_bucket = MagicMock(side_effect=lambda bucket_name: MOCK_S3_BUCKETS.values()[0])
+        is_successful = self._ssm.execute(
+            instance_ids,
+            document_name,
+            comment=comment,
+            parameters=parameters
+        )
+
+        self.assertEquals(True, is_successful)
+        self.assertEquals(True, self._ssm.s3.get_object.called)
+
+    @patch('boto3.client', mock_boto3_client)
+    def test_execute_command_with_bad_s3(self):
+        """Verify that we can execute a command with a bad S3 bucket"""
+        self._ssm.get_s3_bucket_name = MagicMock(return_value='asddsa')
+        instance_ids = ['i-1', 'i-2']
+        document_name = "foo-doc"
+        comment = "foo-comment"
+        parameters = "foo-parameters"
 
         is_successful = self._ssm.execute(
             instance_ids,
@@ -624,7 +659,8 @@ class DiscoSSMTests(TestCase):
         )
 
         self.assertEquals(True, is_successful)
-        self.assertEquals(True, self._ssm.get_s3_bucket.called)
+        self.assertEquals(True, self._ssm.s3.head_bucket.called)
+        self.assertEquals(False, self._ssm.s3.get_object.called)
 
     @patch('boto3.client', mock_boto3_client)
     def test_execute_command_fails_with_other_status(self):

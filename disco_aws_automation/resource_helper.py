@@ -1,5 +1,5 @@
 """
-This module has a bunch of functions about waiting for an AWS resource to become available
+This module has utility functions for working with aws resources
 """
 import logging
 import time
@@ -35,6 +35,15 @@ def create_filters(filter_dict):
 def tag2dict(tags):
     """ Converts a list of AWS tag dicts to a single dict with corresponding keys and values """
     return {tag.get('Key'): tag.get('Value') for tag in tags or {}}
+
+
+def key_values_to_tags(dicts):
+    """
+    Converts the list of key:value strings (example ["mykey:myValue", ...])
+    into a list of AWS tag dicts (example: [{'Key': 'mykey', 'Value': 'myValue'}, ...]
+    """
+    return [{'Key': tag_key_value[0], 'Value': tag_key_value[1]}
+            for tag_key_value in [key_value_option.split(":", 1) for key_value_option in dicts]]
 
 
 def find_or_create(find, create):
@@ -124,7 +133,7 @@ def wait_for_state(resource, state, timeout=15 * 60, state_attr='state'):
                 raise ExpectedTimeoutError(
                     "{0} entered state {1} after {2}s waiting for state {3}"
                     .format(resource, current_state, time_passed, state))
-        except EC2ResponseError:
+        except (EC2ResponseError, BotoServerError):
             pass  # These are most likely transient, we will timeout if they are not
 
         if time_passed >= timeout:

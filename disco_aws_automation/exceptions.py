@@ -43,7 +43,7 @@ class ProgrammerError(Exception):
 
 
 class AsiaqConfigError(EasyExit):
-    "An exception that results from a config file not being found (no stack trace needed)."
+    "An exception that results from a configuration problem (file or value not found; no stack trace needed)."
     pass
 
 
@@ -139,6 +139,21 @@ class VPCNameNotFound(RuntimeError):
 
 class DynamoDBEnvironmentError(RuntimeError):
     """DynamoDB Generic Error"""
+    pass
+
+
+class DataPipelineException(Exception):
+    """Some error to do with data pipelines"""
+    pass
+
+
+class DataPipelineFormatException(DataPipelineException):
+    """An error in data pipeline data formatting."""
+    pass
+
+
+class DataPipelineStateException(DataPipelineException):
+    """An illegal or unexpected state was detected (either locally or on the server)."""
     pass
 
 

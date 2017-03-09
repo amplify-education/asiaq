@@ -88,6 +88,14 @@ class DiscoDynamoDBTests(TestCase):
         self.assertEqual(table["ProvisionedThroughput"]["WriteCapacityUnits"],
                          MOCK_TABLE_WRITE_THROUGHPUT_UPDATE)
 
+    @mock_dynamodb2
+    def test_get_real_table_identifiers(self):
+        "DynamoDB get_real_table_identifiers gets region and real table name from environment and client."
+        dynamodb = DiscoDynamoDB("arbitrary")
+        region, real_name = dynamodb.get_real_table_identifiers("FunnyTable")
+        self.assertEquals("ap-southeast-1", region)  # pass-through value from aws configuration
+        self.assertEquals("FunnyTable_arbitrary", real_name)
+
     def _mock_create_table(self, name, hash_key=MOCK_TABLE_HASH_KEY,
                            range_key=MOCK_TABLE_RANGE_KEY,
                            read_throughput=MOCK_TABLE_READ_THROUGHPUT,
