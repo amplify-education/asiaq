@@ -4,7 +4,6 @@ import logging
 from .base_group import BaseGroup
 from .disco_autoscale import DiscoAutoscale
 from .disco_elastigroup import DiscoElastigroup
-from .exceptions import SpotinstException
 
 logger = logging.getLogger(__name__)
 
