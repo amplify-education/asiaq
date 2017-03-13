@@ -71,7 +71,6 @@ class DiscoElastigroup(BaseGroup):
         if response.status_code == 200:
             return response
         else:
-            # return response
             raise SpotinstException('Error communicating with Spotinst API: {}'.format(path))
 
     def _get_new_groupname(self, hostclass):
@@ -97,6 +96,9 @@ class DiscoElastigroup(BaseGroup):
         try:
             groups = self._spotinst_call().json()['response']['items']
             groups = [group for group in groups if group['name'].startswith(self.environment_name)]
+        except SpotinstException as e:
+            logger.info('Unable to get existing Spotinst groups: %s', e.message)
+            return []
         except KeyError:
             return []
         if group_name:
