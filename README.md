@@ -1523,30 +1523,31 @@ The IAM configuration is made up of several directories:
     Groups based (IAM Users) on policy `.iam` files.
 -   **s3**: Specifies policies for buckets.
 
-There are several policy types: - **.iam**: These are the IAM policies
-themselves. They say what can be done to what resources from which
-locations. - **.tr** These determine the trust relationship between
-accounts. - **.acp**: These are S3 Access Control Lists. When IAM won't
-do what you need. - **.lifecycle** These determine when S3 buckets are
-sent to Glacier or expired. - **.logging** These determine whether and
-where S3 access logs are sent. - **.versioning** These determine whether
-versioning is enabled for an S3 bucket.
+There are several policy types:
+- **.iam**: These are the IAM policies themselves. They say what can be
+            done to what resources from which locations.
+- **.tr**: These determine the trust relationship between accounts.
+- **.acp**: These are S3 Access Control Lists. When IAM won't do what you need.
+- **.lifecycle**: These determine when S3 buckets are sent to Glacier or expired.
+- **.logging**: These determine whether and where S3 access logs are sent.
+- **.versioning**: These determine whether versioning is enabled for an S3 bucket.
 
 The syntax of the IAM policies is described in the [AWS IAM Policy
 Reference](http://docs.aws.amazon.com/IAM/latest/UserGuide/policy-reference.html).
 
 In the disco_aws.ini file there is an [iam] section. This contains up
-to six variables: - **saml_provider_name** Name of SAML Identity
-Assertion Provider (for SSO) - **saml_provider_url** URL of SAML
-Identity Assertion Provider (for SSO) - **role_prefix** This plus "_"
-is prepended to user groups and roles. - **policy_blacklist** This
-prevents a subset of the defined groups and roles from being created.
-This is used with ["@prod](mailto:"@prod)" to keep developer account
-policies from leaking into the production account. -
-**prune_empty_groups** When set to True any groups to which no user
-belongs are pruned. - **naked_roles** This specifies roles to which the
-role_prefix is not applied. This is used when policies need to have a
-specific name for cross account access. For example: SecurityMonkey.
+to six variables:
+- **saml_provider_name**: Name of SAML Identity Assertion Provider (for SSO)
+- **saml_provider_url**: URL of SAML Identity Assertion Provider (for SSO)
+- **role_prefix** This plus "_" is prepended to user groups and roles.
+- **policy_blacklist**: This prevents a subset of the defined groups
+and roles from being created. This is used with ["@prod](mailto:"@prod)"
+to keep developer account policies from leaking into the production account. 
+- **prune_empty_groups**: When set to True any groups to which no user
+belongs are pruned.
+- **naked_roles**: This specifies roles to which the role_prefix is not
+applied. This is used when policies need to have a specific name for
+cross account access. For example: SecurityMonkey.
 
 ### Commands for managing Access Control
 
