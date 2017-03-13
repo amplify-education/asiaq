@@ -95,7 +95,10 @@ class DiscoIAM(object):
 
     def list_groups(self):
         '''Lists IAM User Groups'''
-        groups = throttled_call(self.connection.get_all_groups).list_groups_response.list_groups_result.groups
+        groups = throttled_call(
+            self.connection.get_all_groups,
+            max_items=500
+        ).list_groups_response.list_groups_result.groups
         return [
             group.group_name
             for group in groups
@@ -118,7 +121,8 @@ class DiscoIAM(object):
         '''Lists all policies attached to an IAM User Group'''
         return throttled_call(
             self.connection.get_all_group_policies,
-            group_name
+            group_name,
+            max_items=500
         ).list_group_policies_response.list_group_policies_result.policy_names
 
     def get_group_policy(self, group_name, policy_name):
@@ -152,7 +156,10 @@ class DiscoIAM(object):
 
     def list_users(self):
         '''List IAM Users'''
-        users = throttled_call(self.connection.get_all_users)
+        users = throttled_call(
+            self.connection.get_all_users,
+            max_items=500
+        )
         return [
             user.user_name
             for user in users.list_users_response.list_users_result.users
@@ -196,7 +203,11 @@ class DiscoIAM(object):
 
     def list_user_groups(self, user_name):
         '''Lists groups that IAM User is a member of'''
-        groups_response = throttled_call(self.connection.get_groups_for_user, user_name)
+        groups_response = throttled_call(
+            self.connection.get_groups_for_user,
+            user_name,
+            max_items=500
+        )
         groups = groups_response.list_groups_for_user_response.list_groups_for_user_result.groups
         return [group.group_name for group in groups]
 
@@ -308,7 +319,11 @@ class DiscoIAM(object):
 
     def listrolepolicies(self, role_name):
         '''Lists policies attached to an IAM Role'''
-        response = throttled_call(self.connection.list_role_policies, role_name)
+        response = throttled_call(
+            self.connection.list_role_policies,
+            role_name,
+            max_items=500
+        )
         return [
             policy_name
             for policy_name in response.list_role_policies_response.list_role_policies_result.policy_names
@@ -391,8 +406,8 @@ class DiscoIAM(object):
         deleted_roles = []
         for role in old_roles:
             if role not in updated_roles:
+                logger.debug("Cleaning up role: %s", role)
                 self.removerole(role)
-                logger.debug("Cleanup Role(%s)", role)
                 deleted_roles.append(role)
         return deleted_roles
 
@@ -444,6 +459,10 @@ class DiscoIAM(object):
 
         federated_roles, unfederated_roles = self._list_roles_by_type()
         existing_roles = set(federated_roles) | set(unfederated_roles)
+        non_instance_roles = [
+            role for role in existing_roles
+            if role.startswith(role_prefix)
+        ]
 
         try:
             federated_trust = self._get_federated_trust_relationship_json()
@@ -471,7 +490,7 @@ class DiscoIAM(object):
             self._prune_role_policies(role_name, keep_policy=policy)
             updated_roles.append(role_name)
 
-        deleted_roles = self._cleanup_roles(federated_roles, updated_roles)
+        deleted_roles = self._cleanup_roles(non_instance_roles, updated_roles)
         logger.debug("Updated federated user roles: %s.", updated_roles)
         logger.debug("Deleted federated user roles: %s.", deleted_roles)
         return (updated_roles, deleted_roles)
