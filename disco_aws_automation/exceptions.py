@@ -180,3 +180,8 @@ class RouteCreationError(RuntimeError):
 class TooManyAutoscalingGroups(RuntimeError):
     """Error trying to create more than the expected number of autoscaling groups"""
     pass
+
+
+class SpotinstException(Exception):
+    """Generic Spotinst exception"""
+    pass

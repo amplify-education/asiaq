@@ -4,6 +4,7 @@ import logging
 from .base_group import BaseGroup
 from .disco_autoscale import DiscoAutoscale
 from .disco_elastigroup import DiscoElastigroup
+from .exceptions import SpotinstException
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +25,14 @@ class DiscoGroup(BaseGroup):
             group_name=group_name,
             throw_on_two_groups=throw_on_two_groups
         )
-        spot_group = self._elastigroup.get_existing_group(
-            hostclass=hostclass,
-            group_name=group_name,
-            throw_on_two_groups=throw_on_two_groups
-        )
+        try:
+            spot_group = self._elastigroup.get_existing_group(
+                hostclass=hostclass,
+                group_name=group_name,
+                throw_on_two_groups=throw_on_two_groups
+            )
+        except SpotinstException as e:
+            logger.info('Unable to get existing groups: %s', e.error)
         if asg_group and spot_group:
             return sorted([asg_group.__dict__, spot_group], key=lambda grp: grp['name'], reverse=True)[0]
         elif asg_group:

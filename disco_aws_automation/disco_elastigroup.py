@@ -10,7 +10,7 @@ import requests
 import boto3
 
 from .base_group import BaseGroup
-from .exceptions import TooManyAutoscalingGroups
+from .exceptions import TooManyAutoscalingGroups, SpotinstException
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,8 @@ class DiscoElastigroup(BaseGroup):
         if response.status_code == 200:
             return response
         else:
-            # raise Exception('Error communicating with Spotinst API: {}'.format(path))
-            logger.info('Error communicating with Spotinst API: %s', path)
+            # return response
+            raise SpotinstException('Error communicating with Spotinst API: {}'.format(path))
 
     def _get_new_groupname(self, hostclass):
         """Returns a new elastigroup name when given a hostclass"""
