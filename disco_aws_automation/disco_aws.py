@@ -19,7 +19,6 @@ from .disco_elb import DiscoELB, DiscoELBPortConfig
 from .disco_alarm import DiscoAlarm
 from .disco_group import DiscoGroup
 from .disco_autoscale import DiscoAutoscale
-from .disco_elastigroup import DiscoElastigroup
 from .disco_aws_util import (
     is_truthy,
     get_instance_launch_time,
@@ -62,7 +61,7 @@ class DiscoAWS(object):
     # Too many arguments, but we want to mock a lot of things out, so...
     # pylint: disable=too-many-arguments
     def __init__(self, config, environment_name=None, boto2_conn=None, vpc=None, remote_exec=None,
-                 storage=None, discogroup=None, autoscale=None, elastigroup=None, elb=None,
+                 storage=None, discogroup=None, autoscale=None, elb=None,
                  log_metrics=None, alarms=None):
 
         if not environment_name and not vpc:
@@ -79,7 +78,7 @@ class DiscoAWS(object):
         self._disco_storage = storage or None  # lazily initialized
         self._discogroup = discogroup or None  # lazily initialized
         self._autoscale = autoscale or None  # lazily initialized
-        self._elastigroup = elastigroup or None  # lazily initialized
+        # self._elastigroup = elastigroup or None  # lazily initialized
         self._elb = elb or None  # lazily initialized
         self._log_metrics = log_metrics or None  # lazily initialized
         self._alarms = alarms or None  # lazily initialized
@@ -111,13 +110,6 @@ class DiscoAWS(object):
         if not self._autoscale:
             self._autoscale = DiscoAutoscale(environment_name=self.environment_name)
         return self._autoscale
-
-    @property
-    def elastigroup(self):
-        """Lazily creates disco elastigroup object"""
-        if not self._elastigroup:
-            self._elastigroup = DiscoElastigroup(environment_name=self.environment_name)
-        return self._elastigroup
 
     @property
     def log_metrics(self):

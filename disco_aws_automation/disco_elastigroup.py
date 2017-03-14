@@ -97,9 +97,8 @@ class DiscoElastigroup(BaseGroup):
         try:
             groups = self._spotinst_call().json()['response']['items']
             groups = [group for group in groups if group['name'].startswith(self.environment_name)]
-        except SpotinstException as err:
-            logger.info('Unable to get existing Spotinst groups: %s', err.message)
-            return []
+        except SpotinstException:
+            raise
         except KeyError:
             return []
         if group_name:
@@ -350,8 +349,8 @@ class DiscoElastigroup(BaseGroup):
             logger.info("Scaling down group %s", group['name'])
             try:
                 self._spotinst_call(path='/' + group['id'], data=group_update, method='put')
-            except SpotinstException as err:
-                logger.info('Unable to scaledown Spotinst group(s): %s', err.message)
+            except SpotinstException:
+                raise
 
             if wait:
                 self.wait_instance_termination(group_name=group_name, group=group, noerror=noerror)
