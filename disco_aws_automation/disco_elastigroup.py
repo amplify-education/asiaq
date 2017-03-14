@@ -10,7 +10,7 @@ import requests
 import boto3
 
 from .base_group import BaseGroup
-from .exceptions import TooManyAutoscalingGroups
+from .exceptions import TooManyAutoscalingGroups, SpotinstException
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,8 @@ class DiscoElastigroup(BaseGroup):
         if response.status_code == 200:
             return response
         else:
-            # raise Exception('Error communicating with Spotinst API: {}'.format(path))
-            logger.info('Error communicating with Spotinst API: %s', path)
+            raise SpotinstException('Spotinst API error. Path: {} - Status code: {} - Reason: {}'.
+                                    format(path, response.status_code, response.reason))
 
     def _get_new_groupname(self, hostclass):
         """Returns a new elastigroup name when given a hostclass"""
@@ -97,6 +97,8 @@ class DiscoElastigroup(BaseGroup):
         try:
             groups = self._spotinst_call().json()['response']['items']
             groups = [group for group in groups if group['name'].startswith(self.environment_name)]
+        except SpotinstException:
+            raise
         except KeyError:
             return []
         if group_name:
@@ -126,7 +128,11 @@ class DiscoElastigroup(BaseGroup):
 
     def _get_group_instances(self, group_id):
         """Returns list of instance ids in a group"""
-        return self._spotinst_call(path='/' + group_id + '/status').json()['response']['items']
+        try:
+            return self._spotinst_call(path='/' + group_id + '/status').json()['response']['items']
+        except SpotinstException as err:
+            logger.info('Unable to get Spotinst group instances: %s', err.message)
+            return []
 
     def get_instances(self, hostclass=None, group_name=None):
         """Returns elastigroup instances for hostclass in the current environment"""
@@ -290,18 +296,27 @@ class DiscoElastigroup(BaseGroup):
             # Remove fields not allowed in update
             del group_config['group']['capacity']['unit']
             del group_config['group']['compute']['product']
-            self._spotinst_call(path='/' + group_id, data=group_config, method='put')
-            return {'name': group['name']}
+            try:
+                self._spotinst_call(path='/' + group_id, data=group_config, method='put')
+                return {'name': group['name']}
+            except SpotinstException as err:
+                logger.info('Unable to update Spotinst group: %s', err.message)
         else:
-            new_group = self._spotinst_call(data=group_config, method='post').json()
-            new_group_name = new_group['response']['items'][0]['name']
-            return {'name': new_group_name}
+            try:
+                new_group = self._spotinst_call(data=group_config, method='post').json()
+                new_group_name = new_group['response']['items'][0]['name']
+                return {'name': new_group_name}
+            except SpotinstException as err:
+                logger.info('Unable to create Spotinst group: %s', err.message)
 
     def _delete_group(self, group_id, force=False):
         """Delete an elastigroup by group id"""
         # We need argument `force` to match method in autoscale
         # pylint: disable=unused-argument
-        self._spotinst_call(path='/' + group_id, method='delete')
+        try:
+            self._spotinst_call(path='/' + group_id, method='delete')
+        except SpotinstException as err:
+            logger.info('Unable to delete Spotinst group: %s', err.message)
 
     def delete_groups(self, hostclass=None, group_name=None, force=False):
         """Delete all elastigroups based on hostclass"""
@@ -332,7 +347,10 @@ class DiscoElastigroup(BaseGroup):
                 }
             }
             logger.info("Scaling down group %s", group['name'])
-            self._spotinst_call(path='/' + group['id'], data=group_update, method='put')
+            try:
+                self._spotinst_call(path='/' + group['id'], data=group_update, method='put')
+            except SpotinstException:
+                raise
 
             if wait:
                 self.wait_instance_termination(group_name=group_name, group=group, noerror=noerror)

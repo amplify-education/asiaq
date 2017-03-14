@@ -29,6 +29,11 @@ class BaseGroup(object):
         return
 
     @abstractmethod
+    def list_groups(self):
+        """Returns list of objects for display purposes for all groups"""
+        return
+
+    @abstractmethod
     def get_instances(self, hostclass=None, group_name=None):
         """Get list of instances in groups"""
         return
