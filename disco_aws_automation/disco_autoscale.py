@@ -275,6 +275,11 @@ class DiscoAutoscale(BaseGroup):
             instance_id=None
         )
         throttled_call(self.connection.create_auto_scaling_group, boto2_group)
+        throttled_call(
+            self.boto3_autoscale.enable_metrics_collection,
+            AutoScalingGroupName=group_name,
+            Granularity='1Minute'
+         )
 
         return {
             'name': boto2_group.name,
