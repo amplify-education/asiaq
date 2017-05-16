@@ -2,7 +2,10 @@
 from unittest import TestCase
 
 import requests_mock
+from mock import patch
+from requests import ReadTimeout
 
+from disco_aws_automation.exceptions import SpotinstRateExceededException
 from disco_aws_automation.spotinst_client import SpotinstClient
 
 
@@ -146,3 +149,46 @@ class DiscoSpotinstClientTests(TestCase):
         self.spotinst_client.roll_group('sig-5af12785', 100, 100)
 
         self.assertEqual(len(requests.request_history), 1)
+
+    # pylint: disable=unused-argument
+    @requests_mock.mock()
+    @patch("time.sleep", return_value=None)
+    def test_throttle_error(self, requests, sleep_mock):
+        """Test handling spotinst throttling"""
+        requests.get('https://api.spotinst.io/aws/ec2/group', status_code=429)
+
+        self.assertRaises(SpotinstRateExceededException, self.spotinst_client.get_groups)
+
+    # pylint: disable=unused-argument
+    @requests_mock.mock()
+    @patch("time.sleep", return_value=None)
+    def test_timeout_error(self, requests, sleep_mock):
+        """Test handling a request timeout"""
+        requests.get('https://api.spotinst.io/aws/ec2/group', exc=ReadTimeout)
+
+        self.assertRaises(SpotinstRateExceededException, self.spotinst_client.get_groups)
+
+    # pylint: disable=unused-argument
+    @requests_mock.mock()
+    @patch("time.sleep", return_value=None)
+    def test_retry(self, requests, sleep_mock):
+        """Test request keeps retrying until successful"""
+        responses = [
+            {'status_code': 429},
+            {'exc': ReadTimeout},
+            {'status_code': 429},
+            {'status_code': 429},
+            {'exc': ReadTimeout},
+            {'json': {
+                'response': {
+                    'items': [{
+                        'name': 'foo'
+                    }]
+                }
+            }}
+        ]
+        requests.get('https://api.spotinst.io/aws/ec2/group', responses)
+
+        groups = self.spotinst_client.get_groups()
+
+        self.assertEqual([{'name': 'foo'}], groups)

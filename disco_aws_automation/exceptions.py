@@ -189,3 +189,7 @@ class UnknownDeploymentStrategyException(Exception):
 
 class SpotinstApiException(Exception):
     """Raised if Spotinst API problem encountered"""
+
+
+class SpotinstRateExceededException(Exception):
+    """Raised if Spotinst API throttled a request"""

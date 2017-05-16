@@ -1,7 +1,9 @@
 """Contains SpotinstClient class for taking to the Spotinst REST API"""
 import requests
+from requests import ReadTimeout
 
-from disco_aws_automation.exceptions import SpotinstApiException
+from disco_aws_automation.exceptions import SpotinstApiException, SpotinstRateExceededException
+from disco_aws_automation.resource_helper import Jitter
 
 SPOTINST_API_HOST = 'https://api.spotinst.io'
 
@@ -11,13 +13,6 @@ class SpotinstClient(object):
 
     def __init__(self, token):
         self.token = token
-        self.session = requests.Session()
-
-        # Insert auth token in header
-        self.session.headers.update({
-            "Content-Type": "application/json",
-            "Authorization": "Bearer {}".format(token)
-        })
 
     def create_group(self, group_config):
         """
@@ -26,7 +21,7 @@ class SpotinstClient(object):
         :return: Elastigroup
         :rtype: dict
         """
-        response = self._make_request(path='aws/ec2/group', data=group_config, method='post')
+        response = self._make_throttled_request(path='aws/ec2/group', data=group_config, method='post')
         return response['response']['items'][0]
 
     def update_group(self, group_id, group_config):
@@ -35,7 +30,7 @@ class SpotinstClient(object):
         :param str group_id: Id of group to update
         :param dict group_config: New group config
         """
-        self._make_request(path='aws/ec2/group/%s' % group_id, data=group_config, method='put')
+        self._make_throttled_request(path='aws/ec2/group/%s' % group_id, data=group_config, method='put')
 
     def get_group_status(self, group_id):
         """
@@ -44,7 +39,7 @@ class SpotinstClient(object):
         :return: List of instances in a Elastigroup
         :rtype: list[dict]
         """
-        response = self._make_request(path='aws/ec2/group/%s' % group_id + '/status', method='get')
+        response = self._make_throttled_request(path='aws/ec2/group/%s' % group_id + '/status', method='get')
         return response['response']['items']
 
     def get_groups(self):
@@ -53,14 +48,14 @@ class SpotinstClient(object):
         :return: Lst of Elastigroups
         :rtype: list[dict]
         """
-        return self._make_request(path='aws/ec2/group', method='get')['response']['items']
+        return self._make_throttled_request(path='aws/ec2/group', method='get')['response']['items']
 
     def delete_group(self, group_id):
         """
         Delete an Elastigroup
         :param str group_id: Id of group to delete
         """
-        self._make_request(path='aws/ec2/group/%s' % group_id, method='delete')
+        self._make_throttled_request(path='aws/ec2/group/%s' % group_id, method='delete')
 
     def roll_group(self, group_id, batch_percentage, grace_period):
         """
@@ -76,7 +71,10 @@ class SpotinstClient(object):
                 "action": "REPLACE_SERVER"
             }
         }
-        self._make_request(path='aws/ec2/group/%s/roll' % group_id, data=request, method='put')
+        self._make_throttled_request(path='aws/ec2/group/%s/roll' % group_id, data=request, method='put')
+
+    def _make_throttled_request(self, method, path, params=None, data=None):
+        return self._throttle_spotinst_call(self._make_request, method, path, params, data)
 
     def _make_request(self, method, path, params=None, data=None):
         """
@@ -89,24 +87,50 @@ class SpotinstClient(object):
         :return: The response from the Spotinst API.
         :rtype: dict
         """
-        response = self.session.request(
-            method=method,
-            url='{0}/{1}'.format(SPOTINST_API_HOST, path),
-            params=params,
-            json=data
-        )
+        try:
+            response = requests.request(
+                method=method,
+                url='{0}/{1}'.format(SPOTINST_API_HOST, path),
+                params=params,
+                json=data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer {}".format(self.token)
+                },
+                timeout=60
+            )
+        except ReadTimeout:
+            raise SpotinstRateExceededException("Rate exceeded while calling {0} {1}".format(method, path))
+
+        if response.status_code == 401:
+            raise SpotinstApiException("Provided Spotinst API token is not valid")
+
+        if response.status_code == 429:
+            raise SpotinstRateExceededException("Rate exceeded while calling {0} {1}".format(method, path))
 
         try:
             ret = response.json()
         except ValueError:
             raise SpotinstApiException("Spotinst API did not return JSON response: {0}".format(response.text))
 
-        if response.status_code == 401:
-            raise SpotinstApiException("Provided Spotinst API token is not valid")
-
         if response.status_code != 200:
+            status = ret['response']['status']
+            req_id = ret['request']['id']
             raise SpotinstApiException(
-                "Unknown Spotinst API error encountered: {0}".format(ret['response']['status'])
+                "Unknown Spotinst API error encountered: {0}. RequestId {1}".format(status, req_id)
             )
 
         return ret
+
+    def _throttle_spotinst_call(self, fun, *args, **kwargs):
+        max_time = 5 * 60
+        jitter = Jitter(min_wait=60)  # wait atleast 60 seconds because our rate limit resets then
+        time_passed = 0
+
+        while True:
+            try:
+                return fun(*args, **kwargs)
+            except SpotinstRateExceededException:
+                if time_passed > max_time:
+                    raise
+                time_passed = jitter.backoff()

@@ -221,9 +221,10 @@ class Jitter(object):
     """
     BASE = 3
 
-    def __init__(self):
+    def __init__(self, min_wait=0):
         self._time_passed = 0
         self._cycle = 0
+        self._min_wait = min_wait
 
     def backoff(self):
         """
@@ -232,7 +233,7 @@ class Jitter(object):
         The minimum value 'cycle' can take is 1
         """
         self._cycle += 1
-        new_interval = min(MAX_POLL_INTERVAL, randint(Jitter.BASE, self._cycle * 3))
+        new_interval = self._min_wait + min(MAX_POLL_INTERVAL, randint(Jitter.BASE, self._cycle * 3))
         time.sleep(new_interval)
         self._time_passed += new_interval
         return self._time_passed
