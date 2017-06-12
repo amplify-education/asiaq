@@ -29,6 +29,7 @@ from .disco_chaos import DiscoChaos
 from .disco_storage import DiscoStorage
 from .disco_log_metrics import DiscoLogMetrics
 from .disco_elasticsearch import DiscoElasticsearch
+from .disco_cloudfront import DiscoCloudfront
 from .disco_elasticsearch_archive import DiscoESArchive
 from .exceptions import TimeoutError, ExpectedTimeoutError, AccountError, CommandError, VPCEnvironmentError
 from .exceptions import SmokeTestError, AMIError, VolumeError, InstanceMetadataError, S3WritingError
