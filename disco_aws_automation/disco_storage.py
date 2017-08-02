@@ -364,11 +364,6 @@ class DiscoStorage(object):
         return snapshot.id
 
     def get_snapshot_from_id(self, snapshot_id):
-        """
-        Lists all EBS snapshots associated with a hostclass, sorted by hostclass name and start_time
-
-        :param hostclasses if not None, restrict results to specific hostclasses
-        """
+        """For a given snapshot id return the boto2 snapshot object"""
         return throttled_call(self.connection.get_all_snapshots,
-                              snapshot_ids=[snapshot_id],
-                              filters={'tag:env': self.environment_name})[0]
+                              snapshot_ids=[snapshot_id])[0]
