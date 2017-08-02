@@ -84,8 +84,8 @@ class DiscoStorageTests(TestCase):
 
         self.assertFalse(first_snapshot['SnapshotId'] == second_snapshot['SnapshotId'])
 
-        self.assertEquals(first_snapshot['SnapshotId'],
-                          self.storage.get_snapshot_from_id(first_snapshot['SnapshotId']).id)
+        self.assertEqual(first_snapshot['SnapshotId'],
+                         self.storage.get_snapshot_from_id(first_snapshot['SnapshotId']).id)
 
     @mock_ec2
     def test_delete_snapshot(self):
