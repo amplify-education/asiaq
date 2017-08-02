@@ -126,10 +126,10 @@ def run():
         for snapshot_id in args.snapshots:
             aws.disco_storage.delete_snapshot(snapshot_id)
     elif args.mode == "update":
-        if args.snapshot_id is None:
-            snapshot = aws.disco_storage.get_latest_snapshot(args.hostclass)
-        else:
+        if args.snapshot_id:
             snapshot = aws.disco_storage.get_snapshot_from_id(args.snapshot_id)
+        else:
+            snapshot = aws.disco_storage.get_latest_snapshot(args.hostclass)
         aws.discogroup.update_snapshot(snapshot.id, snapshot.volume_size, hostclass=args.hostclass)
 
 if __name__ == "__main__":
