@@ -77,6 +77,17 @@ class DiscoStorageTests(TestCase):
         self.assertEquals(1, len(self.storage.get_snapshots()))
 
     @mock_ec2
+    def test_get_snapshot_from_id(self):
+        """Test getting all of the snapshots for an environment"""
+        first_snapshot = self._create_snapshot('boo', 'unittestenv')
+        second_snapshot = self._create_snapshot('boo', 'unittestenv')
+
+        self.assertFalse(first_snapshot['SnapshotId'] == second_snapshot['SnapshotId'])
+
+        self.assertEquals(first_snapshot['SnapshotId'],
+                          self.storage.get_snapshot_from_id(first_snapshot['SnapshotId']).id)
+
+    @mock_ec2
     def test_delete_snapshot(self):
         """Test deleting a snapshot"""
         snapshot = self._create_snapshot('foo', 'unittestenv')

@@ -68,6 +68,7 @@ def get_parser():
         'update', help='Update snapshot used by new instances in a hostclass')
     parser_update.set_defaults(mode="update")
     parser_update.add_argument('--hostclass', dest='hostclass', required=True, type=str, default=None)
+    parser_update.add_argument('--snapshot-id', dest='snapshot_id', required=False, type=str, default=None)
 
     return parser
 
@@ -125,7 +126,10 @@ def run():
         for snapshot_id in args.snapshots:
             aws.disco_storage.delete_snapshot(snapshot_id)
     elif args.mode == "update":
-        snapshot = aws.disco_storage.get_latest_snapshot(args.hostclass)
+        if args.snapshot_id is None:
+            snapshot = aws.disco_storage.get_latest_snapshot(args.hostclass)
+        else:
+            snapshot = aws.disco_storage.get_snapshot_from_id(args.snapshot_id)
         aws.discogroup.update_snapshot(snapshot.id, snapshot.volume_size, hostclass=args.hostclass)
 
 if __name__ == "__main__":
