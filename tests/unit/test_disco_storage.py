@@ -78,7 +78,7 @@ class DiscoStorageTests(TestCase):
 
     @mock_ec2
     def test_get_snapshot_from_id(self):
-        """Test getting all of the snapshots for an environment"""
+        """Given a snapshot id get the boto2 snapshot object"""
         first_snapshot = self._create_snapshot('boo', 'unittestenv')
         second_snapshot = self._create_snapshot('boo', 'unittestenv')
 
