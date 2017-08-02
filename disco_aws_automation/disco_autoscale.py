@@ -624,7 +624,7 @@ class DiscoAutoscale(BaseGroup):
 
     def update_snapshot(self, snapshot_id, snapshot_size, hostclass=None, group_name=None):
         """Updates all of a hostclasses existing autoscaling groups to use a different snapshot"""
-        launch_config = self.get_launch_config(hostclass=hostclass, group_name=group_name)
+        launch_config = self._get_launch_config(hostclass=hostclass, group_name=group_name)
         if not launch_config:
             raise Exception("Can't locate hostclass {0}".format(hostclass or group_name))
         snapshot_bdm = launch_config.block_device_mappings[

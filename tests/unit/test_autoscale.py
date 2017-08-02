@@ -352,7 +352,7 @@ class DiscoAutoscaleTests(TestCase):
 
     def test_update_snapshot_using_latest(self):
         """Calling update_snapshot when already running latest snapshot does nothing"""
-        self._autoscale.get_launch_config = MagicMock(
+        self._autoscale._get_launch_config = MagicMock(
             return_value=self.mock_launchconfig(self._autoscale.environment_name, "mhcfoo"))
         self._autoscale.modify_group = MagicMock()
         self._autoscale.update_snapshot("snap-12345678", 99, hostclass="mhcfoo")
@@ -361,7 +361,7 @@ class DiscoAutoscaleTests(TestCase):
     def test_update_snapshot_with_update(self):
         """Calling update_snapshot when not running latest snapshot calls modify_group with new config"""
         mock_lc = self.mock_launchconfig(self._autoscale.environment_name, "mhcfoo", 1)
-        self._autoscale.get_launch_config = MagicMock(return_value=mock_lc)
+        self._autoscale._get_launch_config = MagicMock(return_value=mock_lc)
         self._autoscale.modify_group = MagicMock()
         self._autoscale.get_existing_group = MagicMock(return_value="group")
         self._autoscale.update_snapshot("snap-NEW", 99, hostclass="mhcfoo")
