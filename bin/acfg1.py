@@ -197,7 +197,7 @@ def get_or_create_ids(username, groupname):
     except KeyError:
         logger.info("Creating user %s", username)
         subprocess.call(['/usr/sbin/adduser',
-                         '-r',
+                         '--system',
                          '--gid', str(gid),
                          '--shell', '/sbin/nologin',
                          username])
