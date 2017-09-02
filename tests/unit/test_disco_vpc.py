@@ -331,3 +331,33 @@ class DiscoVPCTests(unittest.TestCase):
             if section.startswith("mhc") and default_config[section].get("ip_address"):
                 expected_calls.append(call(default_config[section].get("ip_address")))
         network_mock.get_interface.assert_has_calls(expected_calls)
+
+    def test_destroy_network_interfaces_(self):
+        """Test destroying network interfaces"""
+        vpc = DiscoVPC('auto-vpc', 'auto-vpc-type', vpc={
+            'CidrBlock': '10.0.0.0/28',
+            'VpcId': 'mock_vpc_id'
+        })
+
+        vpc.boto3_ec2.describe_network_interfaces = MagicMock(return_value={'NetworkInterfaces': [{
+            'NetworkInterfaceId': 'net-1',
+            'Attachment': {
+                'AttachmentId': 'attach-1234'
+            }
+        }, {
+            'NetworkInterfaceId': 'net-2'
+        }]})
+
+        vpc.boto3_ec2.detach_network_interface = MagicMock()
+        vpc.boto3_ec2.delete_network_interface = MagicMock()
+
+        vpc._destroy_interfaces()
+
+        vpc.boto3_ec2.detach_network_interface.assert_called_once_with(
+            AttachmentId='attach-1234',
+            Force=True
+        )
+        vpc.boto3_ec2.delete_network_interface.assert_has_calls([
+            call(NetworkInterfaceId='net-1'),
+            call(NetworkInterfaceId='net-2')
+        ])

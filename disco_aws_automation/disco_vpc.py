@@ -609,8 +609,16 @@ class DiscoVPC(object):
             interfaces = throttled_call(self.boto3_ec2.describe_network_interfaces,
                                         Filters=self.vpc_filters())["NetworkInterfaces"]
             for interface in interfaces:
-                throttled_call(self.boto3_ec2.delete_network_interface,
-                               NetworkInterfaceId=interface['NetworkInterfaceId'])
+                if 'Attachment' in interface:
+                    throttled_call(
+                        self.boto3_ec2.detach_network_interface,
+                        AttachmentId=interface['Attachment']['AttachmentId'],
+                        Force=True
+                    )
+                throttled_call(
+                    self.boto3_ec2.delete_network_interface,
+                    NetworkInterfaceId=interface['NetworkInterfaceId']
+                )
 
         # Keep trying because delete could fail for reasons based on interface's state
         keep_trying(600, _destroy)

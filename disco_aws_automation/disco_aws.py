@@ -340,7 +340,7 @@ class DiscoAWS(object):
 
         return elb
 
-    def provision(self, ami, hostclass=None, owner=None, instance_type=None, monitoring_enabled=True,
+    def provision(self, ami, hostclass=None, owner=None, instance_type=None, monitoring_enabled=False,
                   extra_space=None, extra_disk=None, iops=None, no_destroy=False, min_size=None,
                   desired_size=None, max_size=None, testing=False, termination_policies=None, chaos=None,
                   create_if_exists=False, group_name=None, spotinst=False, spotinst_reserve=None):
