@@ -196,12 +196,12 @@ def get_or_create_ids(username, groupname):
         uid = pwd.getpwnam(username).pw_uid
     except KeyError:
         logger.info("Creating user %s", username)
-        command='/usr/sbin/adduser'
+        command = '/usr/sbin/adduser'
         command_input = ['--gid', str(gid), '--shell', '/sbin/nologin', username]
         output = subprocess.call([command,
                                   '--system',
                                   command_input])
-        if output !=0 :
+        if output != 0:
             subprocess.call([command,
                              '-r',
                              command_input])
