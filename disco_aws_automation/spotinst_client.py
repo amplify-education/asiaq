@@ -190,6 +190,7 @@ class MethodRequest(urllib2.Request):
         urllib2.Request.__init__(self, *args, **kwargs)
 
     def get_method(self):
+        """Get the HTTP method of the request"""
         if self._method is not None:
             return self._method
         return urllib2.Request.get_method(self)

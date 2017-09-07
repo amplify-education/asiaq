@@ -41,8 +41,8 @@ class DiscoSpotinstClientTests(TestCase):
         })
 
         self.assertEqual(result, {'name': 'foo'})
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group')
-        self.assertEquals(httpretty.last_request().method, 'POST')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group')
+        self.assertEqual(httpretty.last_request().method, 'POST')
 
     def test_update_group(self):
         """Test sending update group request"""
@@ -58,8 +58,8 @@ class DiscoSpotinstClientTests(TestCase):
             }
         })
 
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785')
-        self.assertEquals(httpretty.last_request().method, 'PUT')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785')
+        self.assertEqual(httpretty.last_request().method, 'PUT')
 
     def test_group_status(self):
         """Test sending group status request"""
@@ -95,7 +95,7 @@ class DiscoSpotinstClientTests(TestCase):
 
         status = self.spotinst_client.get_group_status('sig-5af12785')
 
-        self.assertEquals(status, [{
+        self.assertEqual(status, [{
             "createdAt": "2015-06-28T15:45:31.000Z",
             "instanceId": None,
             "spotRequestId": "sir-02b5n3tx",
@@ -104,8 +104,8 @@ class DiscoSpotinstClientTests(TestCase):
             "product": "Linux/UNIX",
             "status": "pending-evaluation"
         }])
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/status')
-        self.assertEquals(httpretty.last_request().method, 'GET')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/status')
+        self.assertEqual(httpretty.last_request().method, 'GET')
 
     def test_get_groups(self):
         """Test sending group list request"""
@@ -123,11 +123,11 @@ class DiscoSpotinstClientTests(TestCase):
 
         groups = self.spotinst_client.get_groups()
 
-        self.assertEquals(groups, [{
+        self.assertEqual(groups, [{
             'instanceId': 'i-abcd1234'
         }])
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group')
-        self.assertEquals(httpretty.last_request().method, 'GET')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group')
+        self.assertEqual(httpretty.last_request().method, 'GET')
 
     def test_delete_group(self):
         """Test sending delete group request"""
@@ -152,8 +152,8 @@ class DiscoSpotinstClientTests(TestCase):
 
         self.spotinst_client.delete_group('sig-5af12785')
 
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785')
-        self.assertEquals(httpretty.last_request().method, 'DELETE')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785')
+        self.assertEqual(httpretty.last_request().method, 'DELETE')
 
     def test_roll_group(self):
         """Test sending roll group request"""
@@ -179,8 +179,8 @@ class DiscoSpotinstClientTests(TestCase):
 
         self.spotinst_client.roll_group('sig-5af12785', 100, 100, health_check_type='EC2')
 
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/roll')
-        self.assertEquals(httpretty.last_request().method, 'PUT')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/roll')
+        self.assertEqual(httpretty.last_request().method, 'PUT')
 
     def test_get_deployments(self):
         """Test getting a list of deployments for a group"""
@@ -223,8 +223,8 @@ class DiscoSpotinstClientTests(TestCase):
 
         deployments = self.spotinst_client.get_deployments('sig-5af12785')
 
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/roll')
-        self.assertEquals(httpretty.last_request().method, 'GET')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/roll')
+        self.assertEqual(httpretty.last_request().method, 'GET')
         self.assertEqual(len(deployments), 2)
 
     def test_get_roll_status(self):
@@ -258,8 +258,8 @@ class DiscoSpotinstClientTests(TestCase):
 
         status = self.spotinst_client.get_roll_status('sig-5af12785', 'sbgd-c47a527a')
 
-        self.assertEquals(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/roll/sbgd-c47a527a')
-        self.assertEquals(httpretty.last_request().method, 'GET')
+        self.assertEqual(httpretty.last_request().path, '/aws/ec2/group/sig-5af12785/roll/sbgd-c47a527a')
+        self.assertEqual(httpretty.last_request().method, 'GET')
         self.assertEqual(status['status'], 'finished')
 
     # pylint: disable=unused-argument
