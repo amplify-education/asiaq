@@ -1,7 +1,6 @@
 """Contains SpotinstClient class for taking to the Spotinst REST API"""
 import json
 import logging
-import urllib
 import urllib2
 
 from disco_aws_automation.exceptions import SpotinstApiException, SpotinstRateExceededException
@@ -123,7 +122,7 @@ class SpotinstClient(object):
 
         url = '{0}/{1}'.format(SPOTINST_API_HOST, path)
         req = MethodRequest(
-            url + ('?' + urllib.urlencode(params) if params else ''),
+            url + ('?' + urllib2.urlencode(params) if params else ''),
             json.dumps(data) if data else None,
             headers,
             method=method.upper()
