@@ -1,7 +1,7 @@
 """Contains SpotinstClient class for taking to the Spotinst REST API"""
+import json
 import logging
-import requests
-from requests.exceptions import Timeout, ConnectionError
+import urllib2
 
 from disco_aws_automation.exceptions import SpotinstApiException, SpotinstRateExceededException
 from disco_aws_automation.resource_helper import Jitter
@@ -115,33 +115,36 @@ class SpotinstClient(object):
         :return: The response from the Spotinst API.
         :rtype: dict
         """
-        try:
-            response = requests.request(
-                method=method,
-                url='{0}/{1}'.format(SPOTINST_API_HOST, path),
-                params=params,
-                json=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer {}".format(self.token)
-                },
-                timeout=60
-            )
-        except (ConnectionError, Timeout):
-            raise SpotinstRateExceededException("Rate exceeded while calling {0} {1}".format(method, path))
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer {}".format(self.token)
+        }
 
-        if response.status_code == 401:
+        url = '{0}/{1}'.format(SPOTINST_API_HOST, path)
+        req = MethodRequest(
+            url + ('?' + urllib2.urlencode(params) if params else ''),
+            json.dumps(data) if data else None,
+            headers,
+            method=method.upper()
+        )
+
+        try:
+            response = urllib2.urlopen(req)
+        except urllib2.HTTPError as err:
+            response = err
+
+        if response.getcode() == 401:
             raise SpotinstApiException("Provided Spotinst API token is not valid")
 
-        if response.status_code == 429:
+        if response.getcode() == 429:
             raise SpotinstRateExceededException("Rate exceeded while calling {0} {1}".format(method, path))
 
         try:
-            ret = response.json()
+            ret = json.loads(response.read() or '{}')
         except ValueError:
-            raise SpotinstApiException("Spotinst API did not return JSON response: {0}".format(response.text))
+            raise SpotinstApiException("Spotinst API did not return JSON response: {0}".format(response))
 
-        if response.status_code != 200:
+        if response.getcode() != 200:
             status = ret['response']['status']
             req_id = ret['request']['id']
             errors = ret['response'].get('errors') or []
@@ -174,3 +177,20 @@ class SpotinstClient(object):
                     raise
 
                 time_passed = jitter.backoff()
+
+
+class MethodRequest(urllib2.Request):
+    """Adds ability to choose HTTP method to the regular urllib2 Request object"""
+    def __init__(self, *args, **kwargs):
+        if 'method' in kwargs:
+            self._method = kwargs['method']
+            del kwargs['method']
+        else:
+            self._method = None
+        urllib2.Request.__init__(self, *args, **kwargs)
+
+    def get_method(self):
+        """Get the HTTP method of the request"""
+        if self._method is not None:
+            return self._method
+        return urllib2.Request.get_method(self)
