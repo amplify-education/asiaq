@@ -66,7 +66,7 @@ class DiscoS3Bucket(object):
         config.write(contents)
         contents.seek(0)
         try:
-            bytes_written = key.set_contents_from_file(contents)
+            bytes_written = key.set_contents_from_file(contents, encrypt_key=True)
         except S3ResponseError as err:
             raise S3WritingError("Failed to write to {}: {}".format(key, err.message))
         check_written_s3(key, contents.len, bytes_written)
