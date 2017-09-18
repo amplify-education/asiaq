@@ -66,23 +66,30 @@ class SandboxCommand(CliCommand):
     @classmethod
     def init_args(cls, parser):
         parser.add_argument("sandbox_name", help="Name of the sandbox VPC to create or update.")
+        parser.add_argument("--reference-name", dest="reference_name", default=None, 
+                            help="Alternate name of the sandbox VPC to create or update. \
+                            Creates additional sandboxes from `sandbox_name` config", )
 
     def run(self):
         self.logger.debug("Updating sandbox %s", self.args.sandbox_name)
         sandbox_name = self.args.sandbox_name
         pipeline_file = os.path.join("sandboxes", sandbox_name, "pipeline.csv")
+        reference_name = self.args.reference_name
+
+        if not reference_name:
+            reference_name = sandbox_name
 
         hostclass_dicts = read_pipeline_file(pipeline_file)
 
-        self._update_s3_configs(sandbox_name)
+        self._update_s3_configs(sandbox_name, reference_name)
 
-        self.logger.info("Checking if environment '%s' already exists", sandbox_name)
-        vpc = DiscoVPC.fetch_environment(environment_name=sandbox_name)
+        self.logger.info("Checking if environment '%s' already exists", reference_name)
+        vpc = DiscoVPC.fetch_environment(environment_name=reference_name)
         if vpc:
-            self.logger.info("Sandbox %s already exists: updating it.", sandbox_name)
+            self.logger.info("Sandbox %s already exists: updating it.", reference_name)
             vpc.update()
         else:
-            vpc = DiscoVPC(environment_name=sandbox_name,
+            vpc = DiscoVPC(environment_name=reference_name,
                            environment_type='sandbox',
                            defer_creation=True)
             vpc.create()
@@ -90,7 +97,7 @@ class SandboxCommand(CliCommand):
         self.logger.debug("Hostclass definitions for spin-up: %s", hostclass_dicts)
         DiscoAWS(self.config, vpc=vpc).spinup(hostclass_dicts)
 
-    def _update_s3_configs(self, sandbox_name):
+    def _update_s3_configs(self, sandbox_name, reference_name):
         config_sync_option = self.config.get_asiaq_option('sandbox_sync_config', required=False)
         bucket_name = self.config.get_asiaq_option('sandbox_config_bucket', required=False)
         if not config_sync_option:
@@ -101,7 +108,7 @@ class SandboxCommand(CliCommand):
         for sync_line in config_sync_option.split("\n"):
             local_name, remote_dir = sync_line.split()
             local_config_path = normalize_path("sandboxes", sandbox_name, local_name)
-            remote_config_path = os.path.join(remote_dir, sandbox_name)
+            remote_config_path = os.path.join(remote_dir, reference_name)
             self.logger.info("Uploading config file file %s to %s", local_config_path, remote_config_path)
             s3_bucket.upload_file(local_config_path, remote_config_path)
 
