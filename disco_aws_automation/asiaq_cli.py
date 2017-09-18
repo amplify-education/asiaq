@@ -66,7 +66,7 @@ class SandboxCommand(CliCommand):
     @classmethod
     def init_args(cls, parser):
         parser.add_argument("sandbox_name", help="Name of the sandbox VPC to create or update.")
-        parser.add_argument("--reference-name", dest="reference_name", default=None, 
+        parser.add_argument("--reference-name", dest="reference_name", default=None,
                             help="Alternate name of the sandbox VPC to create or update. \
                             Creates additional sandboxes from `sandbox_name` config", )
 
