@@ -126,10 +126,10 @@ class DiscoSSM(object):
                     u"STDOUT:\n{}\n\n"
                     u"STDERR:\n{}\n\n"
                     u"Exit Code: {}".format(
-                        plugin.get('name', '-').encode('utf-8'),
-                        plugin.get('stdout', '-').encode('utf-8'),
-                        plugin.get('stderr', '-').encode('utf-8'),
-                        plugin.get('exit_code').encode('utf-8')
+                        plugin.get('name', '-'),
+                        plugin.get('stdout', '-'),
+                        plugin.get('stderr', '-'),
+                        str(plugin.get('exit_code'))
                     )
                 )
 
