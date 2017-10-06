@@ -77,7 +77,7 @@ class SandboxCommand(CliCommand):
         if not config_dir:
             config_dir = sandbox_name
 
-        pipeline_file = os.path.join("sandboxes", config_dir, "pipeline.csv")
+        pipeline_file = os.path.join(config_dir, "pipeline.csv")
         hostclass_dicts = read_pipeline_file(pipeline_file)
 
         self._update_s3_configs(sandbox_name, config_dir)
