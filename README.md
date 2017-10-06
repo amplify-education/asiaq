@@ -752,10 +752,10 @@ in the location `$REMOTE_DIRECTORY/$SANDBOX_NAME`.  So, by way of example:
 To spin up a sandbox from existing sandbox config, e.g. Incase you want to 
 spin up more than one sandbox from the same sandbox config, simply run:
 
-    asiaq sandbox $SANDBOX_NAME --config-dir $EXISTING_SANDBOX_NAME
+    asiaq sandbox $SANDBOX_NAME --config-dir $PATH_TO_EXISTING_SANDBOX
 
 The above command will spin up $SANDBOX_NAME sandbox using 
-$EXISTING_SANDBOX_NAME config.
+$PATH_TO_EXISTING_SANDBOX config.
 
 Provisioning a pipeline
 -----------------------
