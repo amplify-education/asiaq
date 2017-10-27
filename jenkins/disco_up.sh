@@ -36,4 +36,3 @@ fi
 trap error ERR
 $DISCO_VPC create --type $ENV_TYPE --name $ENV_NAME
 $DISCO_ELASTICACHE --env $ENV_NAME update
-$DISCO_AWS --env $ENV_NAME --debug spinup --pipeline ${ASIAQ_CONFIG:-.}/pipelines/${PIPELINE}.csv
