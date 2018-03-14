@@ -7,7 +7,6 @@ passlib>=1.6.1,<2
 pytz>=2014.7
 iso8601>=0.1.10,<1
 netaddr>=0.7.12,<1
-python-dateutil>=2.4.0,<2.7
 semantic_version>=2.4.2
 requests_aws4auth<2
 requests>=2.14.2,<3
