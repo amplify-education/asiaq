@@ -289,6 +289,10 @@ class DiscoBake(object):
             logger.warning("Permitting %s to be launched by prod account %s", ami.id, prod_account)
             ami.set_launch_permissions(prod_account)
 
+        throttled_call(ami.add_tags, {
+            'shared_with_account_ids': ','.join(self.option("prod_account_ids").split())
+        })
+
     def promote_latest_ami_to_production(self, hostclass):
         """
         Promote youngest ami of latest stage to production

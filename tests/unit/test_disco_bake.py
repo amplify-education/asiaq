@@ -289,6 +289,7 @@ class DiscoBakeTests(TestCase):
             """Create mock ami with mock call for set_launch_permissions"""
             ami = self.mock_ami(name, stage, product_line, state, is_private)
             ami.set_launch_permissions = MagicMock(return_value=MagicMock())
+            ami.add_tags = MagicMock()
             return ami
 
         amis = []
@@ -303,6 +304,10 @@ class DiscoBakeTests(TestCase):
         amis[1].set_launch_permissions.assert_called_once_with("MockAccount")
         amis[0].set_launch_permissions.assert_not_called()
         amis[2].set_launch_permissions.assert_not_called()
+
+        amis[1].add_tags.assert_called_once_with({
+            'shared_with_account_ids': 'MockAccount'
+        })
 
     def test_list_stragglers(self):
         """Test list_stragglers is correct when some amis are private"""
