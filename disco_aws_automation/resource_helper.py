@@ -5,7 +5,7 @@ import logging
 import time
 from random import randint
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, WaiterError
 from boto.exception import EC2ResponseError, BotoServerError
 
 from .exceptions import (
@@ -85,7 +85,7 @@ def throttled_call(fun, *args, **kwargs):
 
     After each failed attempt a delay is introduced using Jitter.backoff() function.
     """
-    max_time = 5 * 60
+    max_time = 10 * 60
     jitter = Jitter()
     time_passed = 0
 
@@ -102,6 +102,11 @@ def throttled_call(fun, *args, **kwargs):
                 error_code = err.response['Error'].get('Code', 'Unknown')
 
             if (error_code not in ("Throttling", "RequestLimitExceeded")) or time_passed > max_time:
+                raise
+
+            time_passed = jitter.backoff()
+        except WaiterError:
+            if time_passed > max_time:
                 raise
 
             time_passed = jitter.backoff()
@@ -240,10 +245,10 @@ class Jitter(object):
     """
     BASE = 3
 
-    def __init__(self, min_wait=0):
+    def __init__(self, min_wait=3):
         self._time_passed = 0
-        self._cycle = 0
         self._min_wait = min_wait
+        self._previous_interval = 1
 
     def backoff(self):
         """
@@ -251,8 +256,11 @@ class Jitter(object):
         calculates jitter and executes sleep for the calculated time.
         The minimum value 'cycle' can take is 1
         """
-        self._cycle += 1
-        new_interval = self._min_wait + min(MAX_POLL_INTERVAL, randint(Jitter.BASE, self._cycle * 3))
+        new_interval = self._min_wait + randint(
+            0,
+            min(MAX_POLL_INTERVAL, self._previous_interval * 3)
+        )
         time.sleep(new_interval)
         self._time_passed += new_interval
+        self._previous_interval = new_interval
         return self._time_passed
