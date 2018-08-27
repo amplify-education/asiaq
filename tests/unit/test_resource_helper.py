@@ -30,15 +30,17 @@ class ResourceHelperTests(TestCase):
     @patch('time.sleep', return_value=None)
     def test_jitter(self, mock_sleep):
         """Test Jitter backoff """
-        jitter = Jitter()
+        min_wait = 3
+        jitter = Jitter(min_wait=min_wait)
         cycle = 0
         previous_time_passed = 0
         while True:
             cycle += 1
             time_passed = jitter.backoff()
             wait_time = time_passed - previous_time_passed
-            self.assertTrue(wait_time >= 3)
-            self.assertTrue(wait_time <= cycle * 3 and wait_time <= MAX_POLL_INTERVAL)
+            self.assertTrue(wait_time >= min_wait)
+            self.assertTrue(wait_time <= max(min_wait, previous_time_passed * 3))
+            self.assertTrue(wait_time <= MAX_POLL_INTERVAL)
             previous_time_passed = time_passed
             if time_passed > 1000:
                 break

@@ -248,18 +248,21 @@ class Jitter(object):
     def __init__(self, min_wait=3):
         self._time_passed = 0
         self._min_wait = min_wait
-        self._previous_interval = 1
+        self._previous_interval = 0
 
     def backoff(self):
         """
-        This function use a cycle count,
-        calculates jitter and executes sleep for the calculated time.
-        The minimum value 'cycle' can take is 1
+        Uses a slightly modified version of the Decorrelated Jitter function as described in the AWS blog
+
+        The main change is:
+            A random value is chosen from 0 and min(max_poll_interval, prev_value * 3)
+            This is different than min(max_poll_interval, rand(0, prev_value * 3) as defined in the blog
+            We chose to do this to make sure we continue to get random backoff values instead of
+            constantly returning the max value once enough time has passed
         """
-        new_interval = self._min_wait + randint(
-            0,
-            min(MAX_POLL_INTERVAL, self._previous_interval * 3)
-        )
+        new_interval = randint(0, min(MAX_POLL_INTERVAL, self._previous_interval * 3))
+        new_interval = max(self._min_wait, new_interval)
+
         time.sleep(new_interval)
         self._time_passed += new_interval
         self._previous_interval = new_interval
