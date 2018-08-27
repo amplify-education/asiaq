@@ -3,10 +3,11 @@ import copy
 import logging
 import time
 import os
-import boto3
 
 from base64 import b64encode
 from itertools import groupby
+
+import boto3
 
 from disco_aws_automation.resource_helper import throttled_call, tag2dict
 from .spotinst_client import SpotinstClient

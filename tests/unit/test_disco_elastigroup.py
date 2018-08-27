@@ -122,7 +122,8 @@ class DiscoElastigroupTests(TestCase):
 
         self.elastigroup._delete_group.assert_called_once_with(group_id=mock_group['id'])
 
-    def test_list_groups_with_groups(self):
+    @patch("boto3.session.Session")
+    def test_list_groups_with_groups(self, session_mock):
         """Verifies that listgroups correctly formats elastigroups"""
         mock_group1 = self.mock_elastigroup(hostclass="mhcfoo")
         mock_group2 = self.mock_elastigroup(hostclass="mhcbar")
@@ -132,6 +133,7 @@ class DiscoElastigroupTests(TestCase):
         }, {
             "instanceId": "instance1"
         }]
+        session_mock.return_value.region_name = 'us-moon'
 
         mock_listings = [
             {
@@ -220,10 +222,12 @@ class DiscoElastigroupTests(TestCase):
         })
         self.assertEqual(group['name'], 'mhcfoo')
 
-    def test_update_image_id(self):
+    @patch("boto3.session.Session")
+    def test_update_image_id(self, session_mock):
         """Verifies updating AMI of an existing group"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.create_or_update_group(
             hostclass="mhcfoo",
@@ -250,10 +254,12 @@ class DiscoElastigroupTests(TestCase):
 
         self.elastigroup.spotinst_client.update_group.assert_called_once_with(group['id'], expected_request)
 
-    def test_update_size(self):
+    @patch("boto3.session.Session")
+    def test_update_size(self, session_mock):
         """Verifies resizing an existing group"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.create_or_update_group(
             hostclass="mhcfoo",
@@ -283,10 +289,12 @@ class DiscoElastigroupTests(TestCase):
         ("20", None, 20),
         ("", 100, None)
     ])
-    def test_update_spotinst_reserve(self, spotinst_reserve, risk, on_demand_count):
+    @patch("boto3.session.Session")
+    def test_update_spotinst_reserve(self, spotinst_reserve, risk, on_demand_count, session_mock):
         """Verifies updating risk of an existing group"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.create_or_update_group(
             hostclass="mhcfoo",
@@ -309,10 +317,12 @@ class DiscoElastigroupTests(TestCase):
 
         self.elastigroup.spotinst_client.update_group.assert_called_once_with(group['id'], expected_request)
 
-    def test_update_snapshot(self):
+    @patch("boto3.session.Session")
+    def test_update_snapshot(self, session_mock):
         """Verifies that snapshots for a Elastigroup are updated"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.update_snapshot('snapshot-newsnapshotid', 100, hostclass='mhcfoo')
 
@@ -336,10 +346,12 @@ class DiscoElastigroupTests(TestCase):
 
         self.elastigroup.spotinst_client.update_group.assert_called_once_with(group['id'], expected_request)
 
-    def test_update_elb(self):
+    @patch("boto3.session.Session")
+    def test_update_elb(self, session_mock):
         """Verifies ELBs for a Elastigroup are updated"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         new_elbs, extras = self.elastigroup.update_elb(['elb-newelb'], hostclass='mhcfoo')
 
@@ -372,10 +384,12 @@ class DiscoElastigroupTests(TestCase):
         self.assertEqual(set(), new_elbs)
         self.assertEqual(set(), extras)
 
-    def test_update_group_update_elb(self):
+    @patch("boto3.session.Session")
+    def test_update_group_update_elb(self, session_mock):
         """Verifies updating group also updates ELB"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.create_or_update_group(
             hostclass="mhcfoo",
@@ -400,10 +414,12 @@ class DiscoElastigroupTests(TestCase):
 
         self.elastigroup.spotinst_client.update_group.assert_called_with(group['id'], expected_request)
 
-    def test_create_recurring_group_action(self):
+    @patch("boto3.session.Session")
+    def test_create_recurring_group_action(self, session_mock):
         """Verifies recurring actions are created for Elastigroups"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.create_recurring_group_action('0 0 * * *', min_size=1, hostclass='mhcfoo')
 
@@ -425,10 +441,12 @@ class DiscoElastigroupTests(TestCase):
 
         self.elastigroup.spotinst_client.update_group.assert_called_once_with(group['id'], expected_request)
 
-    def test_delete_all_recurring_group_actions(self):
+    @patch("boto3.session.Session")
+    def test_delete_all_recurring_group_actions(self, session_mock):
         """Verifies recurring actions are deleted for Elastigroups"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.delete_all_recurring_group_actions(hostclass='mhcfoo')
 
@@ -440,10 +458,12 @@ class DiscoElastigroupTests(TestCase):
 
         self.elastigroup.spotinst_client.update_group.assert_called_once_with(group['id'], expected_request)
 
-    def test_scaledown(self):
+    @patch("boto3.session.Session")
+    def test_scaledown(self, session_mock):
         """Verifies Elastigroups are scaled down"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         self.elastigroup.scaledown_groups(hostclass='mhcfoo')
 
@@ -557,10 +577,12 @@ class DiscoElastigroupTests(TestCase):
 
         self.assertEqual(expected, instances)
 
-    def test_get_launch_config(self):
+    @patch("boto3.session.Session")
+    def test_get_launch_config(self, session_mock):
         """Testing getting launch config for a hostclass"""
         group = self.mock_elastigroup(hostclass='mhcfoo')
         self.elastigroup.spotinst_client.get_groups.return_value = [group]
+        session_mock.return_value.region_name = 'us-moon'
 
         launch_config = self.elastigroup.get_launch_config(hostclass='mhcfoo')
 
