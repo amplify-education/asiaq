@@ -3,7 +3,6 @@ Tests of disco_aws
 """
 from __future__ import print_function
 
-import unittest
 from unittest import TestCase
 
 from datetime import datetime
@@ -268,7 +267,6 @@ class DiscoAWSTests(TestCase):
         self.assertEqual(_ag['max_size'], 3)  # maximum of listed sizes
 
     @patch_disco_aws
-    @unittest.skip("temporarily disabled until we find out why this is failing :(")
     def test_provision_hostclass_sched_all_none(self, mock_config, **kwargs):
         """
         Provision creates the proper autoscaling group sizes with scheduled sizes
