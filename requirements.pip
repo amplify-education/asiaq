@@ -13,3 +13,6 @@ requests_aws4auth<2
 requests>=2.14.2,<3
 # Since aws ES is 1.5 we must pin elasticsearch-py as follows:
 elasticsearch>=1.0.0,<2.0.0
+# Pin version of urllib to below 1.24 because it's required by botocore
+# Remove when https://github.com/boto/botocore/issues/1583 is fixed
+urllib3>=1.20,<1.24
