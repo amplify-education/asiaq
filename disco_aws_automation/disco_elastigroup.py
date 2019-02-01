@@ -472,13 +472,13 @@ class DiscoElastigroup(BaseGroup):
                 'taskType': 'scale'
             }
 
-            if min_size:
+            if min_size is not None:
                 task['scaleMinCapacity'] = min_size
 
-            if max_size:
+            if max_size is not None:
                 task['scaleMaxCapacity'] = max_size
 
-            if desired_capacity:
+            if desired_capacity is not None:
                 task['scaleTargetCapacity'] = desired_capacity
 
             existing_schedule = existing_group['scheduling']
