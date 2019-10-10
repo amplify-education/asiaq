@@ -142,13 +142,14 @@ class DiscoELB(object):
                            'UnhealthyThreshold': 2,
                            'HealthyThreshold': 2})
 
-    def get_or_create_target_group(self, group_name, vpc_id=None,
+    def get_or_create_target_group(self, environment, hostclass, vpc_id=None,
                                    port_config=None, health_check_path=None, tags=None):
         """ Gets an existing target group using the group_name otherwise creates the target group"""
+        target_group_name = self.get_target_group_name(environment, hostclass)
         try:
             target_groups = [
                 throttled_call(self.elb2_client.describe_target_groups,
-                               Names=[group_name])['TargetGroups'][0]['TargetGroupArn']
+                               Names=[target_group_name])['TargetGroups'][0]['TargetGroupArn']
             ]
             if tags:
                 self.add_tags_to_target_groups(target_groups=target_groups, tags=tags)
@@ -182,7 +183,7 @@ class DiscoELB(object):
 
             target_groups = [throttled_call(
                 self.elb2_client.create_target_group,
-                Name=group_name,
+                Name=target_group_name,
                 Protocol=protocol,
                 Port=port,
                 VpcId=vpc_id,
@@ -439,6 +440,23 @@ class DiscoELB(object):
         human_elb_name = DiscoELB.get_elb_name(environment_name, hostclass=hostclass,
                                                testing=testing)
         return hashlib.sha256(human_elb_name).hexdigest()[:32]
+
+    @staticmethod
+    def get_target_group_name(environment_name, hostclass):
+        """Returns target group name for a given hostclass, truncated to 32 characters with a hash"""
+        target_group_name = '%s-%s' % (environment_name, hostclass)
+        # target group names can't have underscores so replace with dash
+        target_group_name = target_group_name.replace("_", "-")
+
+        # target group names can't be over 32 characters long
+        if len(target_group_name) > 32:
+            # truncate if its longer and append a hash to keep the name unique
+            truncated_group_name = target_group_name[:27]
+            hashed_name = hashlib.sha256(target_group_name).hexdigest()[:5]
+
+            return truncated_group_name + hashed_name
+
+        return target_group_name
 
     @staticmethod
     def get_elb_name(environment_name, hostclass, testing=False):

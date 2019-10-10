@@ -410,11 +410,9 @@ class DiscoAWS(object):
                 for key, value in [tag.split(':')]:
                     tags[key.strip()] = value.strip()
 
-        #  Target groups do not allow "_" so we replace all with "-"
-        target_group_name = self.environment_name + "-" + hostclass
-        target_group_name = target_group_name.replace("_", "-")
         target_groups = self.elb.get_or_create_target_group(
-            group_name=target_group_name,
+            environment=self.environment_name,
+            hostclass=hostclass,
             port_config=DiscoELBPortConfig.from_config(self, hostclass),
             vpc_id=self.vpc.get_vpc_id(),
             health_check_path=self.hostclass_option_default(hostclass, "elb_health_check_url"),

@@ -579,7 +579,8 @@ class DiscoELBTests(TestCase):
         }
         self.elb2.describe_target_groups.return_value = describe_call
         group = self.disco_elb.get_or_create_target_group(
-            group_name="target_group_name",
+            environment=TEST_ENV_NAME,
+            hostclass=TEST_HOSTCLASS,
             vpc_id=TEST_VPC_ID,
         )
         self.assertEqual(group, ["mock_target_group"])
@@ -591,11 +592,12 @@ class DiscoELBTests(TestCase):
             reason="mockreason"
         )
         self.disco_elb.get_or_create_target_group(
-            group_name="target_group_name",
+            environment=TEST_ENV_NAME,
+            hostclass=TEST_HOSTCLASS,
             vpc_id=TEST_VPC_ID,
         )
         self.elb2.create_target_group.assert_called_with(
-            Name="target_group_name",
+            Name="unittestenv-mhcunit",
             Protocol='HTTP',
             Port=80,
             VpcId=TEST_VPC_ID,
@@ -611,12 +613,13 @@ class DiscoELBTests(TestCase):
             reason="mockreason"
         )
         self.disco_elb.get_or_create_target_group(
-            group_name="target_group_name",
+            environment=TEST_ENV_NAME,
+            hostclass=TEST_HOSTCLASS,
             vpc_id=TEST_VPC_ID,
             health_check_path="/mockpath"
         )
         self.elb2.create_target_group.assert_called_with(
-            Name="target_group_name",
+            Name="unittestenv-mhcunit",
             Protocol='HTTP',
             Port=80,
             VpcId=TEST_VPC_ID,
@@ -638,7 +641,8 @@ class DiscoELBTests(TestCase):
         elb_ports = (80,)
 
         self.disco_elb.get_or_create_target_group(
-            group_name="target_group_name",
+            environment=TEST_ENV_NAME,
+            hostclass=TEST_HOSTCLASS,
             vpc_id=TEST_VPC_ID,
             port_config=DiscoELBPortConfig(
                 [
@@ -649,7 +653,7 @@ class DiscoELBTests(TestCase):
             )
         )
         self.elb2.create_target_group.assert_called_with(
-            Name="target_group_name",
+            Name="unittestenv-mhcunit",
             Protocol='HTTP',
             Port=80,
             VpcId=TEST_VPC_ID,
@@ -671,7 +675,8 @@ class DiscoELBTests(TestCase):
         elb_ports = (80,)
 
         self.disco_elb.get_or_create_target_group(
-            group_name="target_group_name",
+            environment=TEST_ENV_NAME,
+            hostclass=TEST_HOSTCLASS,
             vpc_id=TEST_VPC_ID,
             port_config=DiscoELBPortConfig(
                 [
@@ -682,7 +687,7 @@ class DiscoELBTests(TestCase):
             )
         )
         self.elb2.create_target_group.assert_called_with(
-            Name="target_group_name",
+            Name="unittestenv-mhcunit",
             Protocol='TCP',
             Port=80,
             VpcId=TEST_VPC_ID,
@@ -721,7 +726,8 @@ class DiscoELBTests(TestCase):
         }
         self.elb2.describe_target_groups.return_value = describe_call
         self.disco_elb.get_or_create_target_group(
-            group_name="target_group_name",
+            environment=TEST_ENV_NAME,
+            hostclass=TEST_HOSTCLASS,
             vpc_id=TEST_VPC_ID,
             tags={"fake-key": "fake-value"}
         )
@@ -738,12 +744,13 @@ class DiscoELBTests(TestCase):
         )
         self.elb2.create_target_group.return_value = {'TargetGroups': [{'TargetGroupArn': "fake-tg-arn"}]}
         self.disco_elb.get_or_create_target_group(
-            group_name="target_group_name",
+            environment=TEST_ENV_NAME,
+            hostclass=TEST_HOSTCLASS,
             vpc_id=TEST_VPC_ID,
             tags={"fake-key": "fake-value"}
         )
         self.elb2.create_target_group.assert_called_with(
-            Name="target_group_name",
+            Name="unittestenv-mhcunit",
             Protocol='HTTP',
             Port=80,
             VpcId=TEST_VPC_ID,
