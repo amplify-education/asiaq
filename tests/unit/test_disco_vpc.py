@@ -198,7 +198,7 @@ class DiscoVPCTests(unittest.TestCase):
                 self.assertEqual(['Tags'], call_args_tags.keys())
                 call_tags_dict = call_args_tags['Tags']
                 # Verify the number of tag Dictionaries in the list
-                # self.assertEqual(6, len(call_tags_dict))
+                self.assertEqual(6, len(call_tags_dict))
                 # Verify each tag options
                 for tag_option in call_tags_dict:
                     if tag_option['Key'] == 'create_date':

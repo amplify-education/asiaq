@@ -13,7 +13,8 @@ from .resource_helper import (
     create_filters,
     throttled_call,
     wait_for_state_boto3,
-    dict_to_boto3_tags)
+    dict_to_boto3_tags
+)
 
 logger = logging.getLogger(__name__)
 
