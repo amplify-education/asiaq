@@ -508,7 +508,8 @@ class DiscoVPC(object):
 
         tag_list = [{'Key': 'Name', 'Value': self.environment_name},
                     {'Key': 'type', 'Value': self.environment_type},
-                    {'Key': 'create_date', 'Value': datetime.utcnow().isoformat()}]
+                    {'Key': 'create_date', 'Value': datetime.utcnow().isoformat()},
+                    {'Key': 'application', 'Value': self.get_config('application', '')}]
 
         if self._vpc_tags:
             # Add the extra tags to the list of default tags

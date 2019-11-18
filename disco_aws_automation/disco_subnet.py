@@ -377,6 +377,8 @@ class DiscoSubnet(object):
             throttled_call(self.boto3_ec2.get_waiter('nat_gateway_available').wait,
                            NatGatewayIds=[nat_gateway['NatGatewayId']])
 
+            self._apply_subnet_tags(nat_gateway['NatGatewayId'])
+
             return self._find_nat_gateway()
 
         return None
@@ -392,8 +394,11 @@ class DiscoSubnet(object):
             'Resources': [resource_id],
             'Tags': [{'Key': 'Name', 'Value': self._resource_name(suffix)},
                      {'Key': 'meta_network', 'Value': self.metanetwork.name},
-                     {'Key': 'subnet', 'Value': self.name}]
+                     {'Key': 'subnet', 'Value': self.name},
+                     {'Key': 'application', 'Value': self.metanetwork.vpc.get_config('application', '')},
+                     {'Key': 'environment', 'Value': self.metanetwork.vpc.environment_name}]
         }
+
         keep_trying(300, self.boto3_ec2.create_tags, **tag_params)
 
     def _refresh_route_table(self):

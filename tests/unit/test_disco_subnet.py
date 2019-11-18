@@ -1,7 +1,6 @@
 """Tests of disco_subnet"""
-from unittest import TestCase
 import copy
-
+from unittest import TestCase
 from mock import MagicMock, call
 
 from disco_aws_automation.disco_subnet import (
@@ -9,7 +8,6 @@ from disco_aws_automation.disco_subnet import (
     DYNO_NAT_TAG_KEY
 )
 from tests.helpers.patch_disco_aws import TEST_ENV_NAME
-
 
 MOCK_SUBNET_NAME = 'availability_zone_1'
 MOCK_CIDR = '10.101.0.0/16'
@@ -43,12 +41,16 @@ MOCK_NAT_GATEWAY = {'VpcId': MOCK_VPC_ID,
                     'NatGatewayAddresses': [{'AllocationId': MOCK_ALLOCATION_ID,
                                              'PublicIp': MOCK_PUBLIC_IP}]}
 MOCK_ROUTE = {'RouteId': 'route_id'}
-MOCK_TAG = [{'Value': "{0}_{1}_{2}".format(TEST_ENV_NAME,
-                                           MOCK_VPC_NAME,
-                                           MOCK_SUBNET_NAME),
-             'Key': 'Name'},
-            {'Value': 'mock_vpc_name', 'Key': 'meta_network'},
-            {'Value': 'availability_zone_1', 'Key': 'subnet'}]
+MOCK_TAG = [
+    {
+        'Key': 'Name',
+        'Value': "{0}_{1}_{2}".format(TEST_ENV_NAME, MOCK_VPC_NAME, MOCK_SUBNET_NAME),
+    },
+    {'Key': 'meta_network', 'Value': 'mock_vpc_name', },
+    {'Key': 'subnet', 'Value': 'availability_zone_1'},
+    {'Key': 'application', 'Value': 'test'},
+    {'Key': 'environment', 'Value': 'unittestenv'}
+]
 
 
 def _get_metanetwork_mock():
@@ -57,6 +59,15 @@ def _get_metanetwork_mock():
     ret.vpc = MagicMock()
     ret.vpc.environment_name = TEST_ENV_NAME
     ret.vpc.vpc = {'VpcId': MOCK_VPC_ID}
+
+    # pylint: disable=unused-argument
+    def _mock_get_config(option, default=None):
+        if option == 'application':
+            return 'test'
+
+        return None
+
+    ret.vpc.get_config.side_effect = _mock_get_config
     return ret
 
 
