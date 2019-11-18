@@ -37,7 +37,7 @@ from .disco_vpc_endpoints import DiscoVPCEndpoints
 from .disco_vpc_gateways import DiscoVPCGateways
 from .disco_vpc_peerings import DiscoVPCPeerings
 from .disco_vpc_sg_rules import DiscoVPCSecurityGroupRules
-from .resource_helper import (tag2dict, create_filters, keep_trying, throttled_call)
+from .resource_helper import (tag2dict, create_filters, keep_trying, throttled_call, dict_to_boto3_tags)
 from .exceptions import (IPRangeError, VPCConfigError, VPCEnvironmentError)
 
 logger = logging.getLogger(__name__)
@@ -497,6 +497,21 @@ class DiscoVPC(object):
 
         logger.debug("vpc: %s", self.vpc)
 
+    def get_vpc_tags(self):
+        """Get tags for this VPC"""
+        tags = {
+            'Name': self.environment_name,
+            'type': self.environment_type,
+            'create_date': datetime.utcnow().isoformat(),
+            'application': self.get_config('application', '')
+        }
+
+        if self._vpc_tags:
+            # Add the extra tags to the list of default tags
+            tags.update(self._vpc_tags)
+
+        return tags
+
     def _add_vpc_tags(self):
         """
         Add tags to VPC. This function will add the default tags and the tags specified on the create
@@ -506,16 +521,9 @@ class DiscoVPC(object):
         ec2 = boto3.resource('ec2')
         vpc = ec2.Vpc(self.vpc['VpcId'])
 
-        tag_list = [{'Key': 'Name', 'Value': self.environment_name},
-                    {'Key': 'type', 'Value': self.environment_type},
-                    {'Key': 'create_date', 'Value': datetime.utcnow().isoformat()},
-                    {'Key': 'application', 'Value': self.get_config('application', '')}]
+        tags = self.get_vpc_tags()
 
-        if self._vpc_tags:
-            # Add the extra tags to the list of default tags
-            tag_list.extend(self._vpc_tags)
-
-        tags = throttled_call(vpc.create_tags, Tags=tag_list)
+        tags = throttled_call(vpc.create_tags, Tags=dict_to_boto3_tags(tags))
         logger.debug("vpc tags: %s", tags)
 
     def configure_notifications(self, dry_run=False):

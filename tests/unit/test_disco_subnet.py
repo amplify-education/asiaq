@@ -42,14 +42,14 @@ MOCK_NAT_GATEWAY = {'VpcId': MOCK_VPC_ID,
                                              'PublicIp': MOCK_PUBLIC_IP}]}
 MOCK_ROUTE = {'RouteId': 'route_id'}
 MOCK_TAG = [
+    {'Key': 'environment', 'Value': 'unittestenv'},
+    {'Key': 'application', 'Value': 'test'},
+    {'Key': 'meta_network', 'Value': 'mock_vpc_name', },
     {
         'Key': 'Name',
         'Value': "{0}_{1}_{2}".format(TEST_ENV_NAME, MOCK_VPC_NAME, MOCK_SUBNET_NAME),
     },
-    {'Key': 'meta_network', 'Value': 'mock_vpc_name', },
-    {'Key': 'subnet', 'Value': 'availability_zone_1'},
-    {'Key': 'application', 'Value': 'test'},
-    {'Key': 'environment', 'Value': 'unittestenv'}
+    {'Key': 'subnet', 'Value': 'availability_zone_1'}
 ]
 
 
@@ -60,14 +60,13 @@ def _get_metanetwork_mock():
     ret.vpc.environment_name = TEST_ENV_NAME
     ret.vpc.vpc = {'VpcId': MOCK_VPC_ID}
 
-    # pylint: disable=unused-argument
-    def _mock_get_config(option, default=None):
-        if option == 'application':
-            return 'test'
+    def _get_vpc_tags_mock():
+        return {
+            'application': 'test',
+            'environment': 'unittestenv'
+        }
 
-        return None
-
-    ret.vpc.get_config.side_effect = _mock_get_config
+    ret.vpc.get_vpc_tags.side_effect = _get_vpc_tags_mock
     return ret
 
 
@@ -183,8 +182,10 @@ class DiscoSubnetTests(TestCase):
                      {'Values': [MOCK_VPC_ID], 'Name': 'vpc-id'},
                      {'Values': [MOCK_SUBNET_NAME], 'Name': 'availabilityZone'}])
 
-        self.mock_ec2_conn.create_tags.assert_called_once_with(Resources=[MOCK_SUBNET_ID],
-                                                               Tags=MOCK_TAG)
+        self.mock_ec2_conn.create_tags.assert_called_once_with(
+            Resources=[MOCK_SUBNET_ID],
+            Tags=MOCK_TAG
+        )
 
     def test_create_brand_new_subnet(self):
         """ Verify that a brand new subnet is properly created """

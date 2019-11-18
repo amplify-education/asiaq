@@ -12,8 +12,8 @@ from .resource_helper import (
     find_or_create,
     create_filters,
     throttled_call,
-    wait_for_state_boto3
-)
+    wait_for_state_boto3,
+    dict_to_boto3_tags)
 
 logger = logging.getLogger(__name__)
 
@@ -390,13 +390,16 @@ class DiscoSubnet(object):
                                        self.name, suffix)
 
     def _apply_subnet_tags(self, resource_id, suffix=None):
+        tags = self.metanetwork.vpc.get_vpc_tags()
+        tags.update({
+            'Name': self._resource_name(suffix),
+            'meta_network': self.metanetwork.name,
+            'subnet': self.name
+        })
+
         tag_params = {
             'Resources': [resource_id],
-            'Tags': [{'Key': 'Name', 'Value': self._resource_name(suffix)},
-                     {'Key': 'meta_network', 'Value': self.metanetwork.name},
-                     {'Key': 'subnet', 'Value': self.name},
-                     {'Key': 'application', 'Value': self.metanetwork.vpc.get_config('application', '')},
-                     {'Key': 'environment', 'Value': self.metanetwork.vpc.environment_name}]
+            'Tags': dict_to_boto3_tags(tags)
         }
 
         keep_trying(300, self.boto3_ec2.create_tags, **tag_params)

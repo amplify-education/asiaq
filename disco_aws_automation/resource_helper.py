@@ -47,6 +47,18 @@ def key_values_to_tags(dicts):
             for tag_key_value in [key_value_option.split(":", 1) for key_value_option in dicts]]
 
 
+def dict_to_boto3_tags(tag_dict):
+    """
+    Convenience function for converting a dictionary to boto3 tags
+    :param tag_dict: A dictionary of str to str.
+    :return: A list of boto3 tags.
+    """
+    return [
+        {"Key": key, "Value": value}
+        for key, value in tag_dict.items()
+    ]
+
+
 def find_or_create(find, create):
     """Given a find and a create function, create a resource if it doesn't exist"""
     result = find()
