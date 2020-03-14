@@ -202,7 +202,20 @@ class DiscoElastigroup(BaseGroup):
         strategy = {
             'availabilityVsCost': "availabilityOriented",
             'utilizeReservedInstances': True,
-            'fallbackToOd': True
+            'fallbackToOd': True,
+            "revertToSpot": {
+                "performAt": "timeWindow",
+                # time is in UTC. This is midnight EST
+                "timeWindows": [
+                    "Sun:04:00-Sun:05:00",
+                    "Mon:04:00-Mon:05:00",
+                    "Tue:04:00-Tue:05:00",
+                    "Wed:04:00-Wed:05:00",
+                    "Thu:04:00-Thu:05:00",
+                    "Fri:04:00-Fri:05:00",
+                    "Sat:04:00-Sat:05:00"
+                ]
+            }
         }
 
         strategy.update(self._get_risk_config(spotinst_reserve))

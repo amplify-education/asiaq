@@ -211,7 +211,19 @@ class DiscoElastigroupTests(TestCase):
                     'availabilityVsCost': 'availabilityOriented',
                     'fallbackToOd': True,
                     'risk': 100,
-                    'utilizeReservedInstances': True
+                    'utilizeReservedInstances': True,
+                    "revertToSpot": {
+                        "performAt": "timeWindow",
+                        "timeWindows": [
+                            "Sun:04:00-Sun:05:00",
+                            "Mon:04:00-Mon:05:00",
+                            "Tue:04:00-Tue:05:00",
+                            "Wed:04:00-Wed:05:00",
+                            "Thu:04:00-Thu:05:00",
+                            "Fri:04:00-Fri:05:00",
+                            "Sat:04:00-Sat:05:00"
+                        ]
+                    }
                 },
                 'capacity': {
                     'minimum': 1,
@@ -524,7 +536,8 @@ class DiscoElastigroupTests(TestCase):
                     "availabilityVsCost": ANY,
                     "risk": risk,
                     "onDemandCount": on_demand_count,
-                    "fallbackToOd": ANY
+                    "fallbackToOd": ANY,
+                    "revertToSpot": ANY
                 }
             }
         }
