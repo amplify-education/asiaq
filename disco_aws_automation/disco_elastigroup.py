@@ -205,7 +205,7 @@ class DiscoElastigroup(BaseGroup):
             'fallbackToOd': True,
             "revertToSpot": {
                 "performAt": "timeWindow",
-                # time is in UTC. This is midnight EST
+                # time is in UTC. This is 6AM EST
                 "timeWindows": [
                     "Sun:10:00-Sun:11:00",
                     "Mon:10:00-Mon:11:00",
