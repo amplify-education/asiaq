@@ -101,8 +101,7 @@ class DiscoAutoscale(BaseGroup):
         """Returns autoscaled instances in the current environment"""
         instances = get_boto3_paged_results(
             func=self.boto3_autoscale.describe_auto_scaling_instances,
-            results_key='AutoScalingInstances',
-            next_token_key='NextToken'
+            results_key='AutoScalingInstances'
         )
 
         instance_info = []
@@ -124,8 +123,7 @@ class DiscoAutoscale(BaseGroup):
         configs = get_boto3_paged_results(
             func=self.boto3_autoscale.describe_launch_configurations,
             LaunchConfigurationNames=names or [],
-            results_key='LaunchConfigurations',
-            next_token_key='NextToken'
+            results_key='LaunchConfigurations'
         )
 
         return list(self._filter_launch_configs_by_environment(configs))
@@ -647,8 +645,7 @@ class DiscoAutoscale(BaseGroup):
             actions = get_boto3_paged_results(
                 func=self.boto3_autoscale.describe_scheduled_actions,
                 AutoScalingGroupName=group['name'],
-                results_key='ScheduledUpdateGroupActions',
-                next_token_key='NextToken'
+                results_key='ScheduledUpdateGroupActions'
             )
             recurring_actions = [action for action in actions if action['Recurrence'] is not None]
             if recurring_actions:
