@@ -195,7 +195,7 @@ def run():
     # Launch Configuration commands
     elif args.mode == "listconfigs":
         for config in discogroup.get_configs():
-            print("{0:24} {1}".format(config.name, config.image_id))
+            print("{0:24} {1}".format(config['LaunchConfigurationName'], config['ImageId']))
     elif args.mode == "cleanconfigs":
         discogroup.clean_configs()
     elif args.mode == "deleteconfig":

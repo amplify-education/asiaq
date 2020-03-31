@@ -215,13 +215,13 @@ class DiscoElastigroupTests(TestCase):
                     "revertToSpot": {
                         "performAt": "timeWindow",
                         "timeWindows": [
-                            "Sun:04:00-Sun:05:00",
-                            "Mon:04:00-Mon:05:00",
-                            "Tue:04:00-Tue:05:00",
-                            "Wed:04:00-Wed:05:00",
-                            "Thu:04:00-Thu:05:00",
-                            "Fri:04:00-Fri:05:00",
-                            "Sat:04:00-Sat:05:00"
+                            "Sun:10:00-Sun:11:00",
+                            "Mon:10:00-Mon:11:00",
+                            "Tue:10:00-Tue:11:00",
+                            "Wed:10:00-Wed:11:00",
+                            "Thu:10:00-Thu:11:00",
+                            "Fri:10:00-Fri:11:00",
+                            "Sat:10:00-Sat:11:00"
                         ]
                     }
                 },
