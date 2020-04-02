@@ -13,9 +13,15 @@ snapshots to backup hostclasses with persistent EBS storage
 from collections import defaultdict
 import logging
 
-import boto
+import boto3
 
-from .resource_helper import wait_for_state, TimeoutError
+from .resource_helper import (
+    TimeoutError,
+    get_boto3_paged_results,
+    wait_for_state_boto3,
+    tag2dict,
+    dict_to_boto3_tags
+)
 from .exceptions import VolumeError
 from .resource_helper import throttled_call
 
@@ -139,9 +145,9 @@ class DiscoStorage(object):
     Wrapper class to handle all DiscoAWS storage functions
     """
 
-    def __init__(self, environment_name, connection=None):
-        self.connection = connection if connection else boto.connect_ec2()
+    def __init__(self, environment_name, ec2_client=None):
         self.environment_name = environment_name
+        self.ec2_client = ec2_client or boto3.client('ec2')
 
     def is_ebs_optimized(self, instance_type):
         """Returns true if the instance type is EBS Optimized"""
@@ -158,27 +164,58 @@ class DiscoStorage(object):
 
     def get_latest_snapshot(self, hostclass):
         """Returns latests snapshot that exists for a hostclass, or None if none exists."""
-        snapshots = throttled_call(self.connection.get_all_snapshots,
-                                   filters={'tag:hostclass': hostclass,
-                                            'tag:env': self.environment_name})
-        return max(snapshots, key=lambda snapshot: snapshot.start_time) if snapshots else None
+        snapshots = get_boto3_paged_results(
+            self.ec2_client.describe_snapshots,
+            Filters=[{
+                'Name': 'tag:hostclass',
+                'Values': [hostclass]
+            }, {
+                'Name': 'tag:env',
+                'Values': [self.environment_name]
+            }],
+            results_key='Snapshots'
+        )
+
+        return max(snapshots, key=lambda snapshot: snapshot['StartTime']) if snapshots else None
 
     def wait_for_snapshot(self, snapshot):
         """Wait for a snapshot to become available"""
         try:
-            wait_for_state(snapshot, 'completed', state_attr='status', timeout=TIME_BEFORE_SNAP_WARNING)
+            wait_for_state_boto3(
+                self.ec2_client.describe_snapshots,
+                params_dict={
+                    'SnapshotIds': [snapshot['SnapshotId']]
+                },
+                resources_name='Snapshots',
+                expected_state='completed',
+                state_attr='State',
+                timeout=TIME_BEFORE_SNAP_WARNING
+            )
         except TimeoutError:
             logger.warning("Waiting for snapshot to become available...")
-            wait_for_state(snapshot, 'completed', state_attr='status')
+            wait_for_state_boto3(
+                self.ec2_client.describe_snapshots,
+                params_dict={
+                    'SnapshotIds': [snapshot['SnapshotId']]
+                },
+                resources_name='Snapshots',
+                expected_state='completed',
+                state_attr='State'
+            )
             logger.warning("... done.")
 
     def create_snapshot_bdm(self, snapshot, iops):
         """Create a Block Device Mapping for a Snapshot"""
-        device = boto.ec2.blockdevicemapping.EBSBlockDeviceType(
-            snapshot_id=snapshot.id, size=snapshot.volume_size, delete_on_termination=True)
+        device = {
+            'Ebs': {
+                'SnapshotId': snapshot['SnapshotId'],
+                'VolumeSize': snapshot['VolumeSize'],
+                'DeleteOnTermination': True,
+            }
+        }
         if iops:
-            device.volume_type = PROVISIONED_IOPS_VOLUME_TYPE
-            device.iops = iops
+            device['VolumeType'] = PROVISIONED_IOPS_VOLUME_TYPE
+            device['Iops'] = iops
         return device
 
     def configure_storage(self,
@@ -199,21 +236,36 @@ class DiscoStorage(object):
         # TODO  Figure out how to stop this from happening
         disk_names = ['/dev/sd' + chr(ord('a') + i) for i in range(0, 26)]
         if ami_id:
-            ami = throttled_call(self.connection.get_image, ami_id)
-            if not ami:
+            amis = throttled_call(
+                self.ec2_client.describe_images,
+                Filters=[{
+                    'Name': 'image-id',
+                    'Values': [ami_id]
+                }]
+            ).get('Images', [])
+            if not amis:
                 raise VolumeError("Cannot locate AMI to base the BDM of. Is it available to the account?")
-            disk_names[0] = '/dev/sda' if (ami and ami.block_device_mapping and
-                                           '/dev/sda' in ami.block_device_mapping) else ami.root_device_name
+            ami = amis[0]
+            block_device_mappings = ami.get('BlockDeviceMappings', [])
+            mappings_by_name = {}
+            for mapping in block_device_mappings:
+                mappings_by_name[mapping['DeviceName']] = mapping
+
+            disk_names[0] = '/dev/sda' if '/dev/sda' in mappings_by_name else ami['RootDeviceName']
         # ^ See http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html
         current_disk = 0
-        bdm = boto.ec2.blockdevicemapping.BlockDeviceMapping()
+        bdm = []
 
         # Map root partition
-        sda = boto.ec2.blockdevicemapping.EBSBlockDeviceType()
-        sda.delete_on_termination = True
+        sda = {
+            'DeviceName':  disk_names[current_disk],
+            'Ebs': {
+                'DeleteOnTermination': True
+            }
+        }
         if extra_space:
-            sda.size = BASE_AMI_SIZE_GB + extra_space  # size in Gigabytes
-        bdm[disk_names[current_disk]] = sda
+            sda['Ebs']['VolumeSize'] = BASE_AMI_SIZE_GB + extra_space  # size in Gigabytes
+        bdm.append(sda)
         logger.debug("mapped %s to root partition", disk_names[current_disk])
         current_disk += 1
 
@@ -223,27 +275,36 @@ class DiscoStorage(object):
             if latest:
                 self.wait_for_snapshot(latest)
                 current_name = disk_names[current_disk]
-                bdm[current_name] = self.create_snapshot_bdm(latest, iops)
-                logger.debug("mapped %s to snapshot %s", current_name, latest.id)
+                snapshot_bdm = self.create_snapshot_bdm(latest, iops)
+                snapshot_bdm['DeviceName'] = current_name
+                bdm.append(snapshot_bdm)
+                logger.debug("mapped %s to snapshot %s", current_name, latest['SnapshotId'])
                 current_disk += 1
 
         # Map extra disk
         if extra_disk:
-            extra = boto.ec2.blockdevicemapping.EBSBlockDeviceType()
-            extra.delete_on_termination = True
-            extra.size = extra_disk  # size in Gigabytes
+            extra = {
+                'DeviceName': disk_names[current_disk],
+                'Ebs': {
+                    'DeleteOnTermination': True,
+                    'VolumeSize': extra_disk
+                }
+            }
             if iops:
-                extra.volume_type = PROVISIONED_IOPS_VOLUME_TYPE
-                extra.iops = iops
-            bdm[disk_names[current_disk]] = extra
+                extra['Ebs']['VolumeType'] = PROVISIONED_IOPS_VOLUME_TYPE
+                extra['Ebs']['VolumeSize'] = iops
+
+            bdm.append(extra)
             logger.debug("mapped %s to extra disk", disk_names[current_disk])
             current_disk += 1
 
         # Map an ephemeral disk
         for eph_index in range(0, ephemeral_disk_count):
-            eph = boto.ec2.blockdevicemapping.BlockDeviceType()
-            eph.ephemeral_name = 'ephemeral{0}'.format(eph_index)
-            bdm[disk_names[current_disk]] = eph
+            eph = {
+                'DeviceName': disk_names[current_disk],
+                'VirtualName': 'ephemeral{0}'.format(eph_index)
+            }
+            bdm.append(eph)
             logger.debug("mapped %s to ephemeral disk %s", disk_names[current_disk], eph_index)
             current_disk += 1
 
@@ -261,32 +322,66 @@ class DiscoStorage(object):
         :param product_line: The productline that the hostclass belongs to
         :param encrypted:  Boolean whether snapshot is encrypted
         """
-        zones = throttled_call(self.connection.get_all_zones)
+        zones = throttled_call(
+            self.ec2_client.describe_availability_zones
+        ).get('AvailabilityZones', [])
         if not zones:
             raise VolumeError("No availability zones found.  Can't create temporary volume.")
         else:
             zone = zones[0]
 
             def _destroy_volume(volume, raise_error_on_failure=False):
-                if throttled_call(self.connection.delete_volume, volume_id=volume.id):
-                    logger.info("Destroyed temporary volume %s", volume.id)
-                elif raise_error_on_failure:
-                    raise VolumeError("Couldn't destroy temporary volume {}".format(volume.id))
-                else:
-                    logger.error("Couldn't destroy temporary volume %s", volume.id)
+                try:
+                    throttled_call(
+                        self.ec2_client.delete_volume,
+                        VolumeId=volume['VolumeId']
+                    )
+                    logger.info("Destroyed temporary volume %s", volume['VolumeId'])
+                except Exception:
+                    if raise_error_on_failure:
+                        raise VolumeError("Couldn't destroy temporary volume {}".format(volume['VolumeId']))
+                    else:
+                        logger.error("Couldn't destroy temporary volume %s", volume['VolumeId'])
 
+            volume = None
             try:
-                volume = throttled_call(self.connection.create_volume, size=size,
-                                        zone=zone, encrypted=encrypted)
-                logger.info("Created temporary volume %s in zone %s.", volume.id, zone.name)
-                wait_for_state(volume, 'available', state_attr='status')
-                snapshot = volume.create_snapshot()
-                snapshot.add_tag('hostclass', hostclass)
-                snapshot.add_tag('env', self.environment_name)
-                snapshot.add_tag('productline', product_line)
-                logger.info("Created snapshot %s from volume %s.", snapshot.id, volume.id)
+                volume = throttled_call(
+                    self.ec2_client.create_volume,
+                    Size=size,
+                    AvailabilityZone=zone['ZoneName'],
+                    Encrypted=encrypted
+                )
+                logger.info("Created temporary volume %s in zone %s.", volume['VolumeId'], zone['ZoneName'])
+                wait_for_state_boto3(
+                    self.ec2_client.describe_volumes,
+                    params_dict={
+                        'VolumeIds': [volume['VolumeId']]
+                    },
+                    resources_name='Volumes',
+                    expected_state='available',
+                    state_attr='State'
+                )
+                snapshot = throttled_call(
+                    self.ec2_client.create_snapshot,
+                    VolumeId=volume['VolumeId'],
+                    TagSpecifications=[{
+                        'ResourceType': 'snapshot',
+                        'Tags': [{
+                            'Key': 'hostclass',
+                            'Value': hostclass
+                        }, {
+                            'Key': 'env',
+                            'Value': self.environment_name
+                        }, {
+                            'Key': 'productline',
+                            'Value': product_line
+                        }]
+                    }]
+                )
+                logger.info("Created snapshot %s from volume %s.", snapshot['SnapshotId'], volume['VolumeId'])
             except Exception:
-                _destroy_volume(volume)
+                if volume:
+                    _destroy_volume(volume)
                 raise
             else:
                 _destroy_volume(volume, raise_error_on_failure=True)
@@ -297,27 +392,45 @@ class DiscoStorage(object):
 
         :param hostclasses if not None, restrict results to specific hostclasses
         """
-        snapshots = throttled_call(self.connection.get_all_snapshots,
-                                   filters={'tag-key': 'hostclass',
-                                            'tag:env': self.environment_name})
+        snapshots = get_boto3_paged_results(
+            self.ec2_client.describe_snapshots,
+            Filters=[{
+                'Name': 'tag-key',
+                'Values': ['hostclass']
+            }, {
+                'Name': 'tag:env',
+                'Values': [self.environment_name]
+            }],
+            results_key='Snapshots'
+        )
         if hostclasses:
-            snapshots = [snap for snap in snapshots if snap.tags['hostclass'] in hostclasses]
-        return sorted(snapshots, key=lambda snapshot: (snapshot.tags['hostclass'], snapshot.start_time))
+            snapshots = [snap for snap in snapshots if tag2dict(snap['Tags'])['hostclass'] in hostclasses]
+        return sorted(snapshots, key=lambda snap: (tag2dict(snap['Tags'])['hostclass'], snap['StartTime']))
 
     def delete_snapshot(self, snapshot_id):
         """Delete a snapshot by snapshot_id"""
+        snapshots = get_boto3_paged_results(
+            self.ec2_client.describe_snapshots,
+            SnapshotIds=[snapshot_id],
+            Filters=[{
+                'Name': 'tag:env',
+                'Values': [self.environment_name]
+            }],
+            results_key='Snapshots'
+        )
 
-        snapshots = throttled_call(self.connection.get_all_snapshots,
-                                   snapshot_ids=[snapshot_id],
-                                   filters={'tag:env': self.environment_name})
         if not snapshots:
             logger.error("Snapshot ID %s does not exist in environment %s",
                          snapshot_id, self.environment_name)
             return
 
-        if throttled_call(self.connection.delete_snapshot, snapshot_id=snapshot_id):
+        try:
+            throttled_call(
+                self.ec2_client.delete_snapshot,
+                SnapshotId=snapshot_id
+            )
             logger.info("Deleted snapshot %s.", snapshot_id)
-        else:
+        except Exception:
             logger.error("Couldn't delete snapshot %s.")
 
     def cleanup_ebs_snapshots(self, keep_last_n):
@@ -332,38 +445,49 @@ class DiscoStorage(object):
             snapshots = self.get_snapshots()
             snapshots_dict = defaultdict(list)
             for snapshot in snapshots:
-                snapshots_dict[snapshot.tags['hostclass']].append(snapshot)
+                snapshots_dict[tag2dict(snapshot['Tags'])['hostclass']].append(snapshot)
             for hostclass_snapshots in snapshots_dict.values():
                 snapshots_to_delete = sorted(hostclass_snapshots,
-                                             key=lambda snapshot: snapshot.start_time)[:-keep_last_n]
+                                             key=lambda snapshot: snapshot['StartTime'])[:-keep_last_n]
                 for snapshot in snapshots_to_delete:
-                    self.delete_snapshot(snapshot.id)
+                    self.delete_snapshot(snapshot['SnapshotId'])
 
     def take_snapshot(self, volume_id, snapshot_tags=None):
         """Takes a snapshot of an attached volume"""
-        volume = throttled_call(self.connection.get_all_volumes, volume_ids=[volume_id])[0]
+        volume = throttled_call(
+            self.ec2_client.describe_volumes,
+            VolumeIds=[volume_id]
+        ).get('Volumes', [])[0]
 
-        if volume.attach_data and volume.attach_data.instance_id:
+        if 'Attachments' in volume and volume['Attachments'][0].get('InstanceId'):
             instance = throttled_call(
-                self.connection.get_all_instances,
-                instance_ids=[volume.attach_data.instance_id]
-            )[0].instances[0]
+                self.ec2_client.describe_instances,
+                InstanceIds=[volume['Attachments'][0]['InstanceId']]
+            ).get('Reservations')[0]['Instances'][0]
 
-            tags = {'hostclass': instance.tags['hostclass'],
-                    'env': instance.tags['environment'],
-                    'productline': instance.tags['productline']}
+            instance_tags = tag2dict(instance['Tags'])
+            tags = {'hostclass': instance_tags['hostclass'],
+                    'env': instance_tags['environment'],
+                    'productline': instance_tags['productline']}
             if snapshot_tags:
                 tags.update(snapshot_tags)
         else:
             raise RuntimeError("The volume specified is not attched to an instance. "
                                "Snapshotting that is not supported.")
 
-        snapshot = throttled_call(volume.create_snapshot)
-        throttled_call(snapshot.add_tags, tags=tags)
-
-        return snapshot.id
+        snapshot = throttled_call(
+            self.ec2_client.create_snapshot,
+            VolumeId=volume['VolumeId'],
+            TagSpecifications={
+                'ResourceType': 'snapshot',
+                'Tags': dict_to_boto3_tags(tags)
+            }
+        )
+        return snapshot['SnapshotId']
 
     def get_snapshot_from_id(self, snapshot_id):
         """For a given snapshot id return the boto2 snapshot object"""
-        return throttled_call(self.connection.get_all_snapshots,
-                              snapshot_ids=[snapshot_id])[0]
+        return throttled_call(
+            self.ec2_client.describe_snapshots,
+            SnapshotIds=[snapshot_id]
+        ).get('Snapshots', [])[0]

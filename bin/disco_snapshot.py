@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Command line tool for dealing with ELB snapshots
+Command line tool for dealing with EBS snapshots
 """
 from __future__ import print_function
 import argparse
@@ -9,12 +9,14 @@ from disco_aws_automation import DiscoAWS
 from disco_aws_automation.disco_aws_util import run_gracefully
 from disco_aws_automation.disco_config import read_config
 from disco_aws_automation.disco_logging import configure_logging
-
+from disco_aws_automation.resource_helper import tag2dict
 
 # R0912 Allow more than 12 branches so we can parse a lot of commands..
 # pylint: disable=R0912
+
+
 def get_parser():
-    '''Returns command line parser'''
+    """Returns command line parser"""
     parser = argparse.ArgumentParser(description='Disco EBS snapshot management')
     parser.add_argument('--debug', dest='debug', action='store_const', const=True, default=False,
                         help='Log in debug level.')
@@ -101,8 +103,8 @@ def run():
     elif args.mode == "list":
         for snapshot in aws.disco_storage.get_snapshots(args.hostclasses):
             print("{0:26} {1:13} {2:9} {3} {4:4}".format(
-                snapshot.tags['hostclass'], snapshot.id, snapshot.status,
-                snapshot.start_time, snapshot.volume_size))
+                tag2dict(snapshot['Tags'])['hostclass'], snapshot['SnapshotId'], snapshot['State'],
+                snapshot['StartTime'], snapshot['VolumeSize']))
     elif args.mode == "cleanup":
         aws.disco_storage.cleanup_ebs_snapshots(args.keep)
     elif args.mode == "capture":
@@ -130,7 +132,8 @@ def run():
             snapshot = aws.disco_storage.get_snapshot_from_id(args.snapshot_id)
         else:
             snapshot = aws.disco_storage.get_latest_snapshot(args.hostclass)
-        aws.discogroup.update_snapshot(snapshot.id, snapshot.volume_size, hostclass=args.hostclass)
+        aws.discogroup.update_snapshot(snapshot['SnapshotId'], snapshot['VolumeSize'], hostclass=args.hostclass)
+
 
 if __name__ == "__main__":
     run_gracefully(run)

@@ -165,35 +165,6 @@ class DiscoAutoscale(BaseGroup):
             ]
         ).get('LaunchConfigurations', [])[0]
 
-    def _boto2_block_device_mappings_to_boto3(self, block_device_mappings):
-        boto3_block_device_mappings = []
-        for block_device_mapping in block_device_mappings:
-            for name, device in block_device_mapping.iteritems():
-                if device.ephemeral_name:
-                    boto3_block_device_mappings.append({
-                        'DeviceName': name,
-                        'VirtualName': device.ephemeral_name
-                    })
-                elif any([device.size, device.iops, device.snapshot_id]):
-                    device_mapping = {
-                        'DeviceName': name,
-                        'Ebs': {
-                            'DeleteOnTermination': device.delete_on_termination
-                        }
-                    }
-
-                    if device.size:
-                        device_mapping['Ebs']['VolumeSize'] = device.size
-                    if device.iops:
-                        device_mapping['Ebs']['Iops'] = device.iops
-                    if device.volume_type:
-                        device_mapping['Ebs']['VolumeType'] = device.volume_type
-                    if device.snapshot_id:
-                        device_mapping['Ebs']['SnapshotId'] = device.snapshot_id
-
-                    boto3_block_device_mappings.append(device_mapping)
-        return boto3_block_device_mappings
-
     def delete_config(self, config_name):
         """Delete a specific Launch Configuration"""
         throttled_call(
@@ -422,7 +393,7 @@ class DiscoAutoscale(BaseGroup):
             image_id=image_id,
             key_name=key_name,
             security_groups=security_groups,
-            block_device_mappings=self._boto2_block_device_mappings_to_boto3(block_device_mappings),
+            block_device_mappings=block_device_mappings,
             instance_type=instance_type.split(':')[0],
             instance_monitoring=instance_monitoring,
             instance_profile_name=instance_profile_name,

@@ -1,31 +1,37 @@
 """
 AMI bake code."""
 from __future__ import print_function
+
+import getpass
+import logging
+import re
 from ConfigParser import NoOptionError
 from collections import OrderedDict, defaultdict
+from os import path
 from subprocess import check_output
+
+import boto3
 import datetime
-import logging
-import getpass
-import re
+import dateutil.parser
 import time
 import uuid
-from os import path
-
-import boto
-import boto.ec2
-import boto.exception
-import dateutil.parser
+from boto.exception import BotoServerError
 from pytz import UTC
 
+from .disco_aws_util import is_truthy
 from .disco_config import normalize_path, read_config
-from .resource_helper import wait_for_sshable, keep_trying, wait_for_state, throttled_call
-from .disco_storage import DiscoStorage
+from .disco_constants import DEFAULT_CONFIG_SECTION
 from .disco_remote_exec import DiscoRemoteExec, SSH_DEFAULT_OPTIONS
+from .disco_storage import DiscoStorage
 from .disco_vpc import DiscoVPC
 from .exceptions import CommandError, AMIError, WrongPathError, EarlyExitException
-from .disco_constants import DEFAULT_CONFIG_SECTION
-from .disco_aws_util import is_truthy
+from .resource_helper import (
+    wait_for_sshable,
+    keep_trying, wait_for_state,
+    throttled_call,
+    tag2dict,
+    dict_to_boto3_tags
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +42,9 @@ AMI_TAG_LIMIT = 10
 class DiscoBake(object):
     """Class orchestrating baking in AWS"""
 
-    def __init__(self, config=None, connection=None, use_local_ip=False):
+    def __init__(self, config=None, use_local_ip=False):
         """
         :param config: Configuration object to use.
-        :param connection: Boto ec2 connection to use.
         :param use_local_ip: Use local ip of instances for remote exec instead of public.
         """
         if config:
@@ -47,9 +52,9 @@ class DiscoBake(object):
         else:
             self._config = read_config()
 
-        self.connection = connection or boto.connect_ec2()
+        self.ec2_client = boto3.client('ec2')
 
-        self.disco_storage = DiscoStorage(self.connection)
+        self.disco_storage = DiscoStorage(environment_name=None)
 
         self._project_name = self._config.get("disco_aws", "project_name")
 
@@ -69,7 +74,7 @@ class DiscoBake(object):
 
     @property
     def disco_remote_exec(self):
-        '''Lazily creates a remote execution class'''
+        """Lazily creates a remote execution class"""
         if not self._disco_remote_exec:
             self._disco_remote_exec = DiscoRemoteExec(
                 self.vpc.get_credential_buckets(self._project_name))
@@ -77,34 +82,34 @@ class DiscoBake(object):
 
     @staticmethod
     def time_diff_in_hours(now, old_time):
-        '''Returns the difference between two times in hours (floored)'''
+        """Returns the difference between two times in hours (floored)"""
         if not now or not old_time:
             return None
         time_diff = now - old_time
         return int(time_diff.total_seconds() / 60 / 60)
 
     def pretty_print_ami(self, ami, age_since_when=None, in_prod=False, show_tags=False):
-        '''Prints an a pretty AMI description to the standard output'''
-        name = ami.name
+        """Prints an a pretty AMI description to the standard output"""
+        name = ami['Name']
         age_since_when = age_since_when or datetime.datetime.utcnow()
         creation_time = self.get_ami_creation_time(ami)
 
-        if ami.name and AMI_NAME_PATTERN.match(ami.name):
+        if ami['Name'] and AMI_NAME_PATTERN.match(ami['Name']):
             name = self.ami_hostclass(ami)
 
         output = "{0:12} {1:<19} {2:<35} {3:<12} {4:<8} {5:<15} {6:<5}".format(
-            ami.id,
+            ami['ImageId'],
             str(creation_time),
             name,
-            ami.state,
-            ami.tags.get("stage", "-"),
-            ami.tags.get("productline", "-"),
+            ami['State'],
+            tag2dict(ami.get('Tags', [])).get("stage", "-"),
+            tag2dict(ami.get('Tags', [])).get("productline", "-"),
             DiscoBake.time_diff_in_hours(age_since_when, creation_time),
         )
 
         if show_tags:
             ami_tags = [':'.join([key, value])
-                        for key, value in ami.tags.iteritems()
+                        for key, value in tag2dict(ami.get('Tags', [])).iteritems()
                         if key not in ["stage", "productline"]]
             output += ', '.join(ami_tags)
 
@@ -136,24 +141,24 @@ class DiscoBake(object):
         output = []
 
         for ami in amis:
-            name = ami.name
+            name = ami['Name']
             creation_time = self.get_ami_creation_time(ami)
 
-            if ami.name and AMI_NAME_PATTERN.match(ami.name):
+            if ami['Name'] and AMI_NAME_PATTERN.match(ami['Name']):
                 name = self.ami_hostclass(ami)
             info = {
-                "ID": ami.id,
+                "ID": ami['ImageId'],
                 "Created": str(creation_time),
                 "Name": name,
-                "State": ami.state,
-                "Stage": ami.tags.get("stage"),
-                "Product Line": ami.tags.get("productline"),
+                "State": ami['State'],
+                "Stage": tag2dict(ami.get('Tags', [])).get("stage"),
+                "Product Line": tag2dict(ami.get('Tags', [])).get("productline"),
                 "Age": DiscoBake.time_diff_in_hours(age_since_when, creation_time)
             }
 
             if show_tags:
                 ami_tags = [':'.join([key, value])
-                            for key, value in ami.tags.iteritems()
+                            for key, value in tag2dict(ami.get('Tags', [])).iteritems()
                             if key not in ["stage", "productline"]]
                 info["Tags"] = ', '.join(ami_tags)
 
@@ -165,22 +170,22 @@ class DiscoBake(object):
         return headers, output
 
     def option(self, key):
-        '''Returns an option from the [bake] section of the disco_aws.ini config file'''
+        """Returns an option from the [bake] section of the disco_aws.ini config file"""
         return self._config.get("bake", key)
 
     def option_default(self, key, default=None):
-        '''Returns an option from the [bake] section of the disco_aws.ini config file'''
+        """Returns an option from the [bake] section of the disco_aws.ini config file"""
         try:
             return self._config.get("bake", key)
         except NoOptionError:
             return default
 
     def hc_option(self, hostclass, key):
-        '''
+        """
         Returns an option from the [hostclass] section of the disco_aws.ini config file if it is set,
         otherwise it returns that value from the [bake] section if it is set,
         otherwise it returns that value from the DEFAULT_CONFIG_SECTION if it is set.
-        '''
+        """
         if self._config.has_option(hostclass, key):
             return self._config.get(hostclass, key)
         elif self._config.has_option("bake", key):
@@ -278,16 +283,31 @@ class DiscoBake(object):
         return self._final_stage
 
     def promote_ami_to_production(self, ami):
-        '''
+        """
         Share this AMI with the production accounts
-        '''
-        for prod_account in self.option("prod_account_ids").split():
-            logger.warning("Permitting %s to be launched by prod account %s", ami.id, prod_account)
-            ami.set_launch_permissions(prod_account)
+        """
+        account_ids = self.option("prod_account_ids").split()
+        permission_adds = [
+            {'UserId': account}
+            for account in account_ids
+        ]
+        logger.warning("Permitting %s to be launched by prod accounts %s", ami['ImageId'], account_ids)
+        throttled_call(
+            self.ec2_client.modify_image_attribute,
+            ImageId=ami['ImageId'],
+            LaunchPermissions={
+                'Add': permission_adds
+            }
+        )
 
-        throttled_call(ami.add_tags, {
-            'shared_with_account_ids': ','.join(self.option("prod_account_ids").split())
-        })
+        throttled_call(
+            self.ec2_client.create_tags,
+            Resources=[ami['ImageId']],
+            Tags=[{
+                'Key': 'shared_with_account_ids',
+                'Value': ','.join(account_ids)
+            }]
+        )
 
     def promote_latest_ami_to_production(self, hostclass):
         """
@@ -301,15 +321,20 @@ class DiscoBake(object):
         True if ami has been granted prod launch permission. To all prod accounts.
         """
         try:
-            launch_permissions = ami.get_launch_permissions()
-        except boto.exception.EC2ResponseError:
+            launch_permissions = throttled_call(
+                self.ec2_client.describe_image_attribute,
+                Attribute='launchPermission',
+                ImageId=ami['ImageId']
+
+            ).get('LaunchPermissions', [])
+        except BotoServerError:
             # Most likely we failed to lookup launch_permissions because its
             # not our AMI. So we assume its not prod executable. This is an
             # incorrect assumption in prod but there we don't care.
             return False
         image_account_ids = [
-            account[0]
-            for account in launch_permissions.values()
+            permission['UserId']
+            for permission in launch_permissions
         ]
         prod_accounts = self.option("prod_account_ids").split()
         if prod_accounts and set(prod_accounts) - set(image_account_ids):
@@ -317,9 +342,9 @@ class DiscoBake(object):
         return True
 
     def promote_ami(self, ami, stage):
-        '''
+        """
         Change the stage tag of an AMI.
-        '''
+        """
         if stage not in self.ami_stages():
             raise AMIError("Unknown ami stage: {0}, check config option 'ami_stage'".format(stage))
         self._tag_ami(ami, {"stage": stage})
@@ -331,8 +356,11 @@ class DiscoBake(object):
         Raises an AMIError if we can't find the image
         """
         try:
-            return throttled_call(self.connection.get_image, ami_id)
-        except:
+            return throttled_call(
+                self.ec2_client.describe_images,
+                ImageIds=[ami_id]
+            )['Images'][0]
+        except Exception:
             raise AMIError("Could not locate image {0}.".format(ami_id))
 
     def copy_aws_data(self, instance):
@@ -363,7 +391,7 @@ class DiscoBake(object):
                                    include_private=False)
         if not phase1_ami:
             raise AMIError("Couldn't find phase 1 ami.")
-        return phase1_ami.id
+        return phase1_ami['ImageId']
 
     def _enable_root_ssh(self, instance):
         # Pylint wants us to name the exceptions, but we want to ignore all of them
@@ -430,12 +458,39 @@ class DiscoBake(object):
         image_name = "{0} {1}".format(base_image_name, int(time.time()))
 
         interfaces = self.vpc.networks["tunnel"].create_interfaces_specification(public_ip=True)
+        interface_dicts = []
+        index = 0
+        for interface in interfaces:
+            interface_dicts.append({
+                'SubnetId': interface.subnet_id,
+                'Groups': interface.groups,
+                'AssociatePublicIpAddress': interface.associate_public_ip_address,
+                'DeviceIndex': index
+            })
+            index += 1
 
         image = None
 
         # Don't map the snapshot on bake.  Bake scripts shouldn't need the snapshotted volume.
         bake_profile = self.hc_option_default(hostclass, "bake_instance_profile", None)
-        device_map = self.disco_storage.configure_storage(hostclass, ami_id=source_ami_id, map_snapshot=False)
+        devices = self.disco_storage.configure_storage(hostclass, ami_id=source_ami_id, map_snapshot=False)
+
+        reservation = throttled_call(
+            self.ec2_client.run_instances,
+            ImageId=source_ami_id,
+            BlockDeviceMappings=devices,
+            InstanceType=self.option("bakery_instance_type"),
+            KeyName=self.option("bake_key"),
+            NetworkInterfaces=interface_dicts,
+            IamInstanceProfile={
+                'Name': bake_profile
+            },
+            MinCount=1,
+            MaxCount=1,
+            TagSpecifications=[{
+
+            }]
+        )
         reservation = throttled_call(
             self.connection.run_instances,
             source_ami_id,
@@ -489,7 +544,7 @@ class DiscoBake(object):
 
             productline = self.hc_option_default(hostclass, "product_line", None)
 
-            DiscoBake._tag_ami_with_metadata(image, hostclass, stage, source_ami_id, productline,
+            self._tag_ami_with_metadata(image, hostclass, stage, source_ami_id, productline,
                                              is_private, extra_tags=extra_tags)
 
             logger.info("Waiting for AMI to become available")
@@ -510,8 +565,7 @@ class DiscoBake(object):
 
         return image
 
-    @staticmethod
-    def _tag_ami_with_metadata(ami, hostclass, stage, source_ami_id, productline=None, is_private=False,
+    def _tag_ami_with_metadata(self, ami, hostclass, stage, source_ami_id, productline=None, is_private=False,
                                extra_tags=None):
         """
         Tags an AMI with the stage, source_ami, the branch/git-hash of disco_aws_automation,
@@ -538,16 +592,18 @@ class DiscoBake(object):
             if key not in tag_dict:
                 tag_dict[key] = value
 
-        DiscoBake._tag_ami(ami, tag_dict)
+        self._tag_ami(ami, tag_dict)
 
-    @staticmethod
-    def _tag_ami(ami, tag_dict):
+    def _tag_ami(self, ami, tag_dict):
         """
         Adds a dict of tags to an AMI with retries
         """
-        for tag_name in tag_dict.keys():
-            logger.info('Adding tag %s with value %s to ami', tag_name, tag_dict[tag_name])
-            keep_trying(10, ami.add_tag, tag_name, tag_dict[tag_name])
+        keep_trying(
+            10,
+            self.ec2_client.create_tags,
+            Resources=[ami['ImageId']],
+            Tags=dict_to_boto3_tags(tag_dict)
+        )
 
     @staticmethod
     def _old_amis_by_days(amis, max_days):
@@ -557,11 +613,11 @@ class DiscoBake(object):
 
     @staticmethod
     def _ami_sort_key(ami):
-        '''
+        """
         This returns a sort key that can be sorted lexographically
         and end up sorted by hostclass and then creation time.
-        '''
-        keys = ami.name.split()
+        """
+        keys = ami['Name'].split()
         return "{0} {1:012d}".format(keys[0], int(keys[1]))
 
     @staticmethod
@@ -576,9 +632,10 @@ class DiscoBake(object):
         """
         trusted_accounts = list(set(self.option_default("trusted_account_ids", "").split()) | set(['self']))
         return throttled_call(
-            self.connection.get_all_images,
-            image_ids=image_ids,
-            owners=owners or trusted_accounts, filters=filters
+            self.ec2_client.describe_images,
+            ImageIds=image_ids,
+            Owners=owners or trusted_accounts,
+            Filters=filters
         )
 
     def cleanup_amis(self, restrict_hostclass, product_line, stage, min_age, min_count, dry_run,
@@ -601,19 +658,25 @@ class DiscoBake(object):
         # pylint: disable=R0914
         now = datetime.datetime.utcnow()
 
-        filters = {"tag:stage": stage}
+        filters = [{
+            'Name': 'tag:stage',
+            'Values': [stage]
+        }]
 
         if product_line:
-            filters["tag:productline"] = product_line
+            filters.append({
+                'Name': 'tag:productline',
+                'Values': [product_line]
+            })
 
         amis = self.get_amis(filters=filters, owners=['self'])
 
         if excluded_amis:
-            amis = [ami for ami in amis if ami.id not in excluded_amis]
+            amis = [ami for ami in amis if ami['ImageId'] not in excluded_amis]
 
         ami_map = defaultdict(list)
         for ami in amis:
-            if AMI_NAME_PATTERN.match(ami.name):
+            if AMI_NAME_PATTERN.match(ami['Name']):
                 ami_map[DiscoBake.ami_hostclass(ami)].append(ami)
 
         for hostclass, amis in ami_map.iteritems():
@@ -634,11 +697,11 @@ class DiscoBake(object):
                 for ami in to_delete:
                     orphan_snapshot_ids.extend([bdm.snapshot_id for bdm in ami.block_device_mapping.values()
                                                 if bdm.snapshot_id])
-                    ami.deregister()
+                    self.delete_ami(ami)
 
                 # Delete snapshots of all the images we deleted
                 for orphan_snapshot_id in orphan_snapshot_ids:
-                    keep_trying(10, self.connection.delete_snapshot, orphan_snapshot_id)
+                    keep_trying(10, self.ec2_client.delete_snapshot, SnapshotId=orphan_snapshot_id)
 
     def list_amis_by_instance(self, instances=None):
         """
@@ -705,7 +768,17 @@ class DiscoBake(object):
         Delete an AMI
         """
         logger.info("Deleting AMI %s", ami)
-        throttled_call(self.connection.deregister_image, ami, delete_snapshot=True)
+        throttled_call(
+            self.ec2_client.deregister_image,
+            ImageId=ami['ImageId']
+        )
+        for mapping in ami['BlockDeviceMappings']:
+            if mapping.get('Ebs', {}).get('SnapshotId'):
+                logger.info("Deleting snapshot %s", mapping['Ebs']['SnapshotId'])
+                throttled_call(
+                    self.ec2_client.delete_snapshot,
+                    SnapshotId=mapping['Ebs']['SnapshotId']
+                )
 
     def get_snapshots(self, ami):
         """Returns a snapshot object for an AMI object
@@ -736,7 +809,7 @@ class DiscoBake(object):
     def ami_timestamp(ami):
         """Return creation timestamp from ami name, returns 0 if one is not found"""
         try:
-            return int(ami.name.split()[-1])
+            return int(ami['Name'].split()[-1])
         except (ValueError, IndexError):
             return 0
 
@@ -754,7 +827,7 @@ class DiscoBake(object):
     @staticmethod
     def ami_hostclass(ami):
         """Return hostclass/ami-type from ami"""
-        return ami.name.split()[0]
+        return ami['Name'].split()[0]
 
     def ami_filter(self, amis, stage=None, product_line=None, state=None, hostclass=None,
                    include_private=True):
@@ -766,11 +839,11 @@ class DiscoBake(object):
         stages = stage.split(',') if stage else None
         for ami in amis:
             filters = [
-                not stages or ami.tags.get("stage", None) in stages,
-                not product_line or ami.tags.get("productline", None) == product_line,
-                not state or ami.state == state,
+                not stages or tag2dict(ami.get('Tags', [])).get("stage", None) in stages,
+                not product_line or tag2dict(ami.get('Tags', [])).get("productline", None) == product_line,
+                not state or ami['State'] == state,
                 not hostclass or self.ami_hostclass(ami) == hostclass,
-                ami.tags.get("is_private", 'False') == 'False' or include_private]
+                tag2dict(ami.get('Tags', [])).get("is_private", 'False') == 'False' or include_private]
             if all(filters):
                 filtered_amis.append(ami)
         return filtered_amis
@@ -785,8 +858,10 @@ class DiscoBake(object):
             amis = self.get_amis([ami_id])
             return amis[0] if amis else None
         elif hostclass:
-            filters = {}
-            filters["name"] = "{0} *".format(hostclass)
+            filters = [{
+                'Name': 'name',
+                'Values': '{0} *'.format(hostclass)
+            }]
             amis = self.get_amis(filters=filters)
             logger.debug("AMI search for %s found %s", filters, amis)
             amis = self.ami_filter(amis, stage, product_line, include_private=include_private)
@@ -806,7 +881,7 @@ class DiscoBake(object):
         stage_priority = {stage: index for index, stage in enumerate(stages)}
 
         def _get_priority(ami):  # because apparently it's not OK to assign a lambda (<eyeroll>)
-            return stage_priority.get(ami.tags.get("stage"), 100000000)
+            return stage_priority.get(tag2dict(ami.get('Tags', [])).get("stage"), 100000000)
 
         found_ami = amis[0]
         for ami in amis[1:]:

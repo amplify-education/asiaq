@@ -766,20 +766,25 @@ class DiscoElastigroup(BaseGroup):
         bdms = []
         for block_device_mapping in block_device_mappings or []:
             for name, device in block_device_mapping.iteritems():
-                if device.ephemeral_name:
+                if device.get('VirtualName'):
                     bdms.append({
                         'deviceName': name,
                         'virtualName': device.ephemeral_name
                     })
-                elif any([device.size, device.iops, device.snapshot_id]):
-                    bdm = {'deviceName': name, 'ebs': {'deleteOnTermination': device.delete_on_termination}}
-                    if device.size:
-                        bdm['ebs']['volumeSize'] = device.size
-                    if device.iops:
-                        bdm['ebs']['iops'] = device.iops
-                    if device.volume_type:
-                        bdm['ebs']['volumeType'] = device.volume_type
-                    if device.snapshot_id:
-                        bdm['ebs']['snapshotId'] = device.snapshot_id
+                elif device.get('Ebs'):
+                    bdm = {
+                        'deviceName': name,
+                        'ebs': {
+                            'deleteOnTermination': device['Ebs']['DeleteOnTermination']
+                        }
+                    }
+                    if device['Ebs'].get('VolumeSize'):
+                        bdm['ebs']['volumeSize'] = device['Ebs']['VolumeSize']
+                    if device['Ebs'].get('Iops'):
+                        bdm['ebs']['iops'] = device['Ebs']['Iops']
+                    if device['Ebs'].get('VolumeType'):
+                        bdm['ebs']['volumeType'] = device['Ebs']['VolumeType']
+                    if device['Ebs']['SnapshotId']:
+                        bdm['ebs']['snapshotId'] = device['Ebs']['SnapshotId']
                     bdms.append(bdm)
         return bdms or None
