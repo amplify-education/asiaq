@@ -45,4 +45,5 @@ trap "ssh-agent -k" EXIT
 
 rake virtualenv:create
 source venv/bin/activate
+pip install -U setuptools
 rake jenkins:build_no_docs
