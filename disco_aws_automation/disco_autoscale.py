@@ -680,7 +680,7 @@ class DiscoAutoscale(BaseGroup):
         snapshot_devs = [
             device
             for device in launch_config['BlockDeviceMappings']
-            if device.get('SnapshotId')
+            if device.get('Ebs', {}).get('SnapshotId')
         ]
         if not snapshot_devs:
             raise Exception("Hostclass {0} does not mount a snapshot".format(hostclass))
@@ -698,7 +698,7 @@ class DiscoAutoscale(BaseGroup):
             security_groups=launch_config.get('SecurityGroups'),
             block_device_mappings=launch_config.get('BlockDeviceMappings'),
             instance_type=launch_config.get('InstanceType'),
-            instance_monitoring=launch_config.get('InstanceMonitoring'),
+            instance_monitoring=launch_config.get('InstanceMonitoring').get('Enabled'),
             instance_profile_name=launch_config.get('IamInstanceProfile'),
             ebs_optimized=launch_config.get('EbsOptimized'),
             user_data=launch_config.get('UserData'),
@@ -711,21 +711,26 @@ class DiscoAutoscale(BaseGroup):
         if not launch_config:
             raise Exception("Can't locate hostclass {0}".format(hostclass or group_name))
         snapshot_bdm = DiscoAutoscale._get_snapshot_dev(launch_config, hostclass)
-        if snapshot_bdm['SnapshotId'] != snapshot_id:
-            old_snapshot_id = snapshot_bdm['SnapshotId']
-            snapshot_bdm['SnapshotId'] = snapshot_id
-            snapshot_bdm['Size'] = snapshot_size
+        if snapshot_bdm['Ebs']['SnapshotId'] != snapshot_id:
+            old_snapshot_id = snapshot_bdm['Ebs']['SnapshotId']
+            snapshot_bdm['Ebs']['SnapshotId'] = snapshot_id
+            snapshot_bdm['Ebs']['VolumeSize'] = snapshot_size
             self.modify_group(
                 self.get_existing_group(hostclass=hostclass, group_name=group_name),
                 self._create_new_launchconfig(hostclass, launch_config)['LaunchConfigurationName']
             )
             logger.info(
-                "Updating %s group's snapshot from %s to %s", hostclass or group_name, old_snapshot_id,
-                snapshot_id)
+                "Updating %s group's snapshot from %s to %s",
+                hostclass or group_name,
+                old_snapshot_id,
+                snapshot_id
+            )
         else:
             logger.debug(
-                "Autoscaling group %s is already referencing latest snapshot %s", hostclass or group_name,
-                snapshot_id)
+                "Autoscaling group %s is already referencing latest snapshot %s",
+                hostclass or group_name,
+                snapshot_id
+            )
 
     def update_elb(self, elb_names, hostclass=None, group_name=None):
         """Updates an existing autoscaling group to use a different set of load balancers"""
