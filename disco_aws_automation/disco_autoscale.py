@@ -698,7 +698,7 @@ class DiscoAutoscale(BaseGroup):
             security_groups=launch_config.get('SecurityGroups'),
             block_device_mappings=launch_config.get('BlockDeviceMappings'),
             instance_type=launch_config.get('InstanceType'),
-            instance_monitoring=launch_config.get('InstanceMonitoring').get('Enabled'),
+            instance_monitoring=launch_config.get('InstanceMonitoring', {}).get('Enabled', False),
             instance_profile_name=launch_config.get('IamInstanceProfile'),
             ebs_optimized=launch_config.get('EbsOptimized'),
             user_data=launch_config.get('UserData'),

@@ -360,7 +360,9 @@ class DiscoAutoscaleTests(TestCase):
                 'DeviceName': '/dev/root',
             }, {
                 'DeviceName': '/dev/snap',
-                'SnapshotId': 'snap-12345678'
+                'Ebs': {
+                    'SnapshotId': 'snap-12345678'
+                },
             }, {
                 'DeviceName': '/dev/ephemeral'
             }]
@@ -398,7 +400,7 @@ class DiscoAutoscaleTests(TestCase):
                 snap_bdm = device
                 break
 
-        self.assertEqual(snap_bdm['SnapshotId'], "snap-NEW")
+        self.assertEqual(snap_bdm['Ebs']['SnapshotId'], "snap-NEW")
         self.assertEqual(self._autoscale.modify_group.call_count, 1)
 
     def test_update_elb_with_new_lb(self):
