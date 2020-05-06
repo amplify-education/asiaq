@@ -1,4 +1,6 @@
 """Contains DiscoAutoscale class that orchestrates AWS Autoscaling"""
+from base64 import b64decode
+
 import logging
 import random
 import time
@@ -701,7 +703,8 @@ class DiscoAutoscale(BaseGroup):
             instance_monitoring=launch_config.get('InstanceMonitoring', {}).get('Enabled', False),
             instance_profile_name=launch_config.get('IamInstanceProfile'),
             ebs_optimized=launch_config.get('EbsOptimized'),
-            user_data=launch_config.get('UserData'),
+            # decode base64 because boto3 automatically encodes userdata to base64 to avoid encoding it twice
+            user_data=b64decode(launch_config.get('UserData')).decode('utf-8'),
             associate_public_ip_address=launch_config.get('AssociatePublicIpAddress')
         )
 
