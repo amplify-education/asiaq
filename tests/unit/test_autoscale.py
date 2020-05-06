@@ -356,6 +356,7 @@ class DiscoAutoscaleTests(TestCase):
         """Create a dummy LaunchConfiguration"""
         launchconfig = {
             'LaunchConfigurationName': '{0}_{1}_{2}'.format(env, hostclass, lc_num),
+            'UserData': '',
             'BlockDeviceMappings': [{
                 'DeviceName': '/dev/root',
             }, {
