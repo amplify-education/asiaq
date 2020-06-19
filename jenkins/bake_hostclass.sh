@@ -8,7 +8,7 @@ SUCCEEDED="true"
 
 echo "hostclass: $HOSTCLASS"
 
-source "${SELF_DIR}/boto_init.sh"
+#source "${SELF_DIR}/boto_init.sh"
 
 if [ "${BAKE_TO_STAGE}" != "" ]; then
     stage_arg="--stage=$BAKE_TO_STAGE"
