@@ -59,7 +59,7 @@ function boto_init_activate {
     export PATH=/opt/wgen-3p/python27/bin:$PATH
     virtualenv $boto_tmp_dir > /dev/null
     source $boto_tmp_dir/bin/activate > /dev/null
-    pip install --no-cache-dir ${SELF_DIR}/.. > /dev/null  # installs asiaq
+    #pip install --no-cache-dir ${SELF_DIR}/.. > /dev/null  # installs asiaq
 }
 
 function boto_init_deactivate {
