@@ -1,5 +1,6 @@
 """Binaries"""
 from __future__ import print_function
+
 from collections import defaultdict
 
 import sys
@@ -28,6 +29,10 @@ def print_table(rows, headers=None, space_between_columns=4):
     for row in rows:
         for header in headers:
             value = row.get(header, '-')
+            # fix unicode errors by encoding to ascii and replacing all non-ascii characters with "?"
+            if isinstance(value, unicode):
+                value = value.encode('ascii', 'replace')
+                row[header] = value
             columns_to_sizing[header] = max(len(str(value)), columns_to_sizing[header])
 
     for header in headers:
