@@ -60,7 +60,7 @@ function boto_init_activate {
     virtualenv $boto_tmp_dir > /dev/null
     source $boto_tmp_dir/bin/activate > /dev/null
     pip install pip==20.3 > /dev/null # upgrade to version that supports python 2.7
-    pip install --upgrade pip wheel > /dev/null # upgrades pip and wheel so the install succeeds
+    pip install --upgrade wheel > /dev/null # upgrades pip and wheel so the install succeeds
     pip install ${SELF_DIR}/.. > /dev/null  # installs asiaq
 }
 
