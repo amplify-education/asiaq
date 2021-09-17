@@ -200,7 +200,7 @@ class DiscoElastigroup(BaseGroup):
         # pylint: disable=too-many-arguments, too-many-locals
         """Create new elastigroup configuration"""
         strategy = {
-            'availabilityVsCost': "equalAzDistribution",
+            'availabilityVsCost': "availabilityOriented",
             'utilizeReservedInstances': True,
             'fallbackToOd': True,
             "revertToSpot": {
