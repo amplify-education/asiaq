@@ -5,7 +5,7 @@ cd "$(dirname "$0")/../"
 ASIAQ_DIR=$(pwd)
 
 # Build the asiaq docker file with latest changes
-if ! docker_output=$(docker build . -t asiaq:latest --load 2>&1) ; then
+if ! docker_output=$(docker build . -t asiaq:latest 2>&1) ; then
     echo "Error building docker image!"
     echo "$docker_output"
     exit 1
