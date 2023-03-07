@@ -7,6 +7,7 @@ docker run --rm -it \
     --env SSH_AUTH_SOCK="/run/host-services/ssh-auth.sock" \
     --env AWS_PROFILE="$AWS_PROFILE" \
     --env SPOTINST_TOKEN="$SPOTINST_TOKEN" \
+    --env LOGNAME="$(whoami)" \
     --entrypoint "/usr/local/bin/$(basename $0)" \
     asiaq:latest \
     "$@"
