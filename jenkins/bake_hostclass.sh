@@ -1,8 +1,7 @@
 #!/bin/bash
 
 SELF_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-DEFAULT_PREFIX="jenkins/"
-JENKINS_URL="https://localhost/${JENKINS_URL_PREFIX-$DEFAULT_PREFIX}"
+JENKINS_URL="https://localhost${JENKINS_URL_PREFIX-/jenkins/}"
 JOB_NAME=bake-hostclass-STATUS
 TOKEN="NjJmNmJkYTM5ZjBjMGE1OGM5MmE4OWNh"
 SUCCEEDED="true"
