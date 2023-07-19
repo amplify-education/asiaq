@@ -22,14 +22,28 @@ namespace "setup" do
   desc "Install dependencies"
   task :install_deps => ["virtualenv:verify"] do
     notice("Installing dependencies")
-    Pip.install "-r requirements.pip"
+
+    if File.exist?("requirements.txt")
+        Pip.install "-r requirements.txt"
+    else
+        # get rid of this once everything is converted to using
+        # the standard dependency filename requirements.txt
+        Pip.install "-r requirements.pip"
+    end
+
     notice("Dependencies installed")
   end
 
   desc "Install egg"
   task :install => ["install_deps"] do
     notice("Installing egg")
-    Pip.install "-r requirements.pip"
+    if File.exist?("requirements.txt")
+        Pip.install "-r requirements.txt"
+    else
+        # get rid of this once everything is converted to using
+        # the standard dependency filename requirements.txt
+        Pip.install "-r requirements.pip"
+    end
     Setup.setup "install"
     notice("Egg installed")
     print Setup.installed_versions
