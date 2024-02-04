@@ -26,8 +26,8 @@ def get_version():
 
 
 def get_requirements():
-    """Reads the installation requirements from requirements.pip"""
-    with open("requirements.pip") as f:
+    """Reads the installation requirements from requirements.txt"""
+    with open("requirements.txt") as f:
         lines = f.read().split("\n")
         lines_without_comments = filter(lambda l: not l.startswith('#'), lines)
         return lines_without_comments
