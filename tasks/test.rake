@@ -87,7 +87,7 @@ module Nose
   end
 
   def self.test_requirements_file
-    ['test-requirements.pip', 'test-requirements.txt'].find {|f|
+    ['test-requirements.txt', 'test-requirements.txt'].find {|f|
         File.exist?(f)
     }
   end
