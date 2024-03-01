@@ -22,14 +22,14 @@ namespace "setup" do
   desc "Install dependencies"
   task :install_deps => ["virtualenv:verify"] do
     notice("Installing dependencies")
-    Pip.install "-r requirements.pip"
+    Pip.install "-r requirements.txt"
     notice("Dependencies installed")
   end
 
   desc "Install egg"
   task :install => ["install_deps"] do
     notice("Installing egg")
-    Pip.install "-r requirements.pip"
+    Pip.install "-r requirements.txt"
     Setup.setup "install"
     notice("Egg installed")
     print Setup.installed_versions

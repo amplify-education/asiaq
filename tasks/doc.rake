@@ -2,7 +2,9 @@ namespace :doc do
   desc 'Install the requirements for documentation'
   task :install => ["virtualenv:verify"] do
     notice("Install documentation dependencies")
-    Pip.install "-r docs/conf/doc-requirements.pip"
+    # Determine the correct requirements file
+    requirements_file = File.exist?("docs/conf/requirements.txt") ? "docs/conf/requirements.txt" : "docs/conf/doc-requirements.pip"
+    Pip.install "-r #{requirements_file}"
     notice("Documentation dependencies installed")
     puts Setup.installed_versions
   end
